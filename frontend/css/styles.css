@@ -235,25 +235,21 @@ a {
 
 @media (max-width: 768px) {
   .app-header {
-    position: relative;
     flex-wrap: wrap;
     padding: 8px 10px;
     row-gap: 8px;
     justify-content: flex-start;
-    /* Faint decorative wordmark, painted as a background image (not a real child) so it can
-       never intercept taps or shift flex layout — the brand text itself is hidden below to
-       make room for real page actions, but the name still quietly lives in the header. */
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='240' height='48'%3E%3Ctext x='50%25' y='50%25' dominant-baseline='middle' text-anchor='middle' font-family='Arial, Helvetica, sans-serif' font-weight='800' font-size='22' letter-spacing='4' fill='%23034f46' fill-opacity='0.055'%3EARCLENT%3C/text%3E%3C/svg%3E");
-    background-repeat: no-repeat;
-    /* Anchored to row 1's fixed height (not the header box as a whole) — the header grows
-       taller when the dropdown opens, and centering on the whole box would drag the mark down
-       into the dropdown list instead of leaving it in row 1 where it belongs. */
-    background-position: center 24px;
   }
 
-  /* Brand text traded for room to keep the real page actions (Start New Job, Job Details, …)
-     on one uncluttered row — see the background watermark above for where the name went. */
+  /* Brand stays visible on every page except the AI Recruiter chat (see the body:has(.workspace)
+     override below) — there, Start New Job + Job Details need the row to themselves. */
   .app-header .brand {
+    order: 1;
+    font-size: 14px;
+  }
+
+  /* Chat is the one page where the brand gives way to Start New Job + Job Details. */
+  body:has(.workspace) .app-header .brand {
     display: none;
   }
 
@@ -267,12 +263,9 @@ a {
      justify-content:space-between, so it stays flush right regardless of how many — or how few
      — action buttons a given page has. */
   .header-actions .btn {
+    order: 2;
     padding: 6px 14px;
     font-size: 12.5px;
-  }
-
-  #start-new-btn {
-    order: 2;
   }
 
   #job-details-toggle {
