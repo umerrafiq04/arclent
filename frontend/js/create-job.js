@@ -11,6 +11,11 @@ const attachBtn = document.getElementById("attach-btn");
 const fileInput = document.getElementById("file-input");
 const attachmentChipSlot = document.getElementById("attachment-chip-slot");
 const savedIndicatorEl = document.getElementById("saved-indicator");
+const jobDrawer = document.getElementById("job-panel");
+const jobDrawerOverlay = document.getElementById("job-drawer-overlay");
+const jobDetailsToggle = document.getElementById("job-details-toggle");
+const jobDetailsClose = document.getElementById("job-details-close");
+const jobDetailsDot = document.getElementById("job-details-dot");
 
 let sessionId = null;
 let currentPhase = null;
@@ -302,8 +307,14 @@ function renderEditingBanner(data) {
   return box;
 }
 
+function updateJobDetailsAttention(data) {
+  const needsAttention = data.phase === "publish_confirm" || data.phase === "editing";
+  jobDetailsDot.hidden = !needsAttention;
+}
+
 function renderJobPanel(data) {
   clearChildren(jobPanelBody);
+  updateJobDetailsAttention(data);
   const jobState = data.job_state || {};
   const record = data.job_record;
 
@@ -653,6 +664,23 @@ startNewBtn.addEventListener("click", () => {
   renderMessages([]);
   renderJobPanel({ job_state: {}, job_record: null, phase: "collecting", completeness_pct: 0, missing_essential: [] });
   chatInput.focus();
+});
+
+function openJobDrawer() {
+  jobDrawer.classList.add("open");
+  jobDrawerOverlay.classList.add("open");
+}
+
+function closeJobDrawer() {
+  jobDrawer.classList.remove("open");
+  jobDrawerOverlay.classList.remove("open");
+}
+
+jobDetailsToggle.addEventListener("click", openJobDrawer);
+jobDetailsClose.addEventListener("click", closeJobDrawer);
+jobDrawerOverlay.addEventListener("click", closeJobDrawer);
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && jobDrawer.classList.contains("open")) closeJobDrawer();
 });
 
 const logoutBtn = document.getElementById("logout-btn");

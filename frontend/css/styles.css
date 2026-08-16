@@ -21,6 +21,10 @@
   --radius: 14px;
   --radius-lg: 22px;
   --radius-pill: 999px;
+  /* Shared page width — dashboard/jobs/admin all read off this one token instead of each
+     page getting its own unrelated max-width. ~83% of a 1920px viewport, scales down
+     gracefully on smaller desktops, never gets absurdly stretched on ultra-wide screens. */
+  --page-max-width: 1600px;
   --shadow-sm: 0 1px 2px rgba(26, 26, 26, 0.05), 0 1px 1px rgba(26, 26, 26, 0.03);
   --shadow-md: 0 8px 20px rgba(26, 26, 26, 0.09), 0 2px 6px rgba(26, 26, 26, 0.05);
   font-family: "Figtree", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
@@ -42,22 +46,21 @@ body {
   font-size: 15px;
   line-height: 1.55;
   overflow-x: hidden;
-  display: flex;
-  flex-direction: column;
   min-height: 100vh;
   min-height: 100dvh;
 }
 
-/* create-job.html only (the sole page with a .workspace), desktop side-by-side layout —
-   pinned to EXACTLY the viewport height so .workspace's flex:1 has a real fixed budget to
-   shrink into, with both panels scrolling internally. Mobile is intentionally different
-   (see #chat-panel below): chat fills the full screen on its own and the page scrolls down
-   to reach job info, rather than squeezing both panels into one shared viewport. */
-@media (min-width: 881px) {
-  body:has(.workspace) {
-    height: 100vh;
-    height: 100dvh;
-  }
+/* create-job.html only (the sole page with a .workspace) — a flex column pinned to EXACTLY
+   the viewport height on every screen size, so the chat panel's flex:1 has a real fixed
+   budget to fill and scrolls internally. Job Information is a drawer overlay (see .job-drawer
+   below), not a second thing sharing this space. Deliberately scoped to THIS page only —
+   making body a flex container globally fights .page-container's margin:auto centering on
+   every other page (auto margins on a flex item's cross axis disable stretch-to-max-width). */
+body:has(.workspace) {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  height: 100dvh;
 }
 
 h1, h2, h3, h4, h5, h6 {
@@ -284,9 +287,15 @@ a {
 }
 
 .page-container {
-  max-width: 1100px;
+  max-width: var(--page-max-width);
   margin: 0 auto;
-  padding: 24px 16px 60px;
+  padding: 24px 32px 60px;
+}
+
+@media (max-width: 640px) {
+  .page-container {
+    padding: 20px 16px 60px;
+  }
 }
 
 .page-title {
@@ -349,6 +358,12 @@ a {
   margin: 0;
 }
 
+#profile-view {
+  /* Caps the label/value reading width on wide desktop cards — otherwise short values like
+     "Not set" trail off into a very long dashed line with nothing in it. */
+  max-width: 760px;
+}
+
 .profile-view-row {
   display: flex;
   gap: 10px;
@@ -383,6 +398,21 @@ a {
   gap: 4px;
   font-size: 13px;
   color: var(--color-text-muted);
+}
+
+/* Modifier for wide-context forms (the recruiter dashboard's company profile) — NOT applied
+   to auth.html's forms, which live in a narrow card where two columns would feel cramped. */
+@media (min-width: 720px) {
+  .profile-form.profile-form-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    column-gap: 20px;
+  }
+
+  .profile-form-grid label:has(textarea),
+  .profile-form-grid .form-actions {
+    grid-column: 1 / -1;
+  }
 }
 
 .profile-form input,
@@ -539,8 +569,8 @@ a {
 
 .jobs-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-  gap: 14px;
+  grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+  gap: 16px;
 }
 
 .table-toolbar {
@@ -675,29 +705,23 @@ a {
   font-size: 14px;
 }
 
+/* Chat is the whole show now — Job Information lives in a drawer overlay (.job-drawer,
+   below), not a second grid column, so the recruiter never has to share the screen with it
+   while typing. Centered, comfortable reading width — not the full --page-max-width, since
+   a chat column that wide would hurt readability of both messages and JD cards. */
 .workspace {
-  display: grid;
-  grid-template-columns: minmax(0, 1.15fr) minmax(0, 0.85fr);
-  /* The row fills exactly whatever height remains below the header (body is now a flex
-     column, .workspace is flex:1 within it) — no more guessing the header's pixel height. */
-  grid-template-rows: minmax(0, 1fr);
-  gap: 16px;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  max-width: 1000px;
   padding: 16px;
-  max-width: 1280px;
   margin: 0 auto;
-  align-items: stretch;
   flex: 1 1 auto;
   min-height: 0;
 }
 
 @media (max-width: 880px) {
   .workspace {
-    grid-template-columns: 1fr;
-    /* Stacked on mobile: chat gets the FULL screen on its own (see #chat-panel's explicit
-       height below) — job info is reached by scrolling the page down, not by squeezing
-       both panels into a shared, smaller viewport. */
-    grid-template-rows: auto auto;
-    gap: 10px;
     padding: 10px;
   }
 }
@@ -729,16 +753,82 @@ a {
   color: var(--color-text-muted);
 }
 
-/* Chat panel — on desktop it stretches to fill its .workspace grid row (see above). On
-   mobile it gets an explicit height instead: the full screen minus the header block and
-   .workspace's own padding, so the input row is guaranteed visible with zero scrolling on
-   load. Job info sits right below it in normal document flow — reached by scrolling the
-   page down, exactly like scrolling to any other section below the fold. */
-@media (max-width: 880px) {
-  #chat-panel {
-    height: calc(100vh - 100px);
-    height: calc(100dvh - 100px);
+.job-drawer-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+/* Slim bar above the conversation — just the Job Details toggle, right-aligned. Nothing
+   else lives here; the point is to keep the chat itself completely uncluttered. */
+.chat-toolbar {
+  flex-shrink: 0;
+  display: flex;
+  justify-content: flex-end;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.job-details-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin-left: 6px;
+  border-radius: 50%;
+  background: var(--color-danger);
+}
+
+/* Job Information drawer — a fixed overlay, not a second column, so it never competes with
+   the chat for space. Closed (translated fully off-screen) by default; .open slides it in.
+   Desktop: fixed width from the right edge. Mobile: full width. Same component either way. */
+.job-drawer-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(20, 24, 22, 0.45);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s ease;
+  z-index: 150;
+}
+
+.job-drawer-overlay.open {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.job-drawer {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 440px;
+  max-width: 100%;
+  border-radius: 0;
+  border-top: none;
+  border-bottom: none;
+  border-right: none;
+  transform: translateX(100%);
+  transition: transform 0.25s ease;
+  z-index: 151;
+}
+
+.job-drawer.open {
+  transform: translateX(0);
+}
+
+@media (max-width: 640px) {
+  .job-drawer {
+    width: 100%;
   }
+}
+
+/* Chat panel — the only thing in .workspace's flex column now, so it just fills 100% of
+   the remaining space on every screen size (.workspace/body are already pinned to the exact
+   viewport height above). Input row is always visible with zero scrolling, no separate
+   mobile case needed anymore. */
+#chat-panel {
+  flex: 1;
+  min-height: 0;
 }
 
 #message-list {
@@ -846,8 +936,8 @@ a {
 }
 
 .jd-message-row .jd-card {
-  max-width: 86%;
-  width: 420px;
+  max-width: 92%;
+  width: 640px;
   background: var(--color-surface);
   box-shadow: var(--shadow-sm);
 }
@@ -958,19 +1048,14 @@ a {
 }
 
 /* Job info panel — fills the remaining space below its .panel-header and scrolls
-   internally, same pattern as #message-list, rather than a viewport-relative guess. */
+   internally, same pattern as #message-list, rather than a viewport-relative guess. Now
+   lives inside the .job-drawer overlay (below) instead of a permanent grid column, but this
+   inner scrolling behavior is identical on every screen size, so no mobile override needed. */
 #job-panel-body {
   flex: 1;
   padding: 18px;
   overflow-y: auto;
   min-height: 0;
-}
-
-@media (max-width: 880px) {
-  #job-panel-body {
-    flex: none;
-    overflow-y: visible;
-  }
 }
 
 .status-row {

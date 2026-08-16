@@ -26,6 +26,12 @@
 
   <main class="workspace">
     <section id="chat-panel" class="panel">
+      <div class="chat-toolbar">
+        <button type="button" id="job-details-toggle" class="btn btn-small">
+          Job Details
+          <span id="job-details-dot" class="job-details-dot" hidden></span>
+        </button>
+      </div>
       <div id="message-list"></div>
       <div id="error-banner-slot"></div>
       <div id="attachment-chip-slot"></div>
@@ -46,15 +52,19 @@
         <button type="submit" class="btn btn-primary" id="send-btn">Send</button>
       </form>
     </section>
-
-    <section id="job-panel" class="panel">
-      <div class="panel-header">
-        <h2>Job Information</h2>
-        <span id="saved-indicator" class="saved-indicator"></span>
-      </div>
-      <div id="job-panel-body"></div>
-    </section>
   </main>
+
+  <div id="job-drawer-overlay" class="job-drawer-overlay"></div>
+  <aside id="job-panel" class="panel job-drawer">
+    <div class="panel-header">
+      <h2>Job Information</h2>
+      <div class="job-drawer-header-actions">
+        <span id="saved-indicator" class="saved-indicator"></span>
+        <button type="button" id="job-details-close" class="icon-btn" aria-label="Close job details">✕</button>
+      </div>
+    </div>
+    <div id="job-panel-body"></div>
+  </aside>
 
   <script src="/js/api.js"></script>
   <script src="/js/dates.js"></script>

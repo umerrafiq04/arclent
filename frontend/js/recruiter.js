@@ -178,7 +178,10 @@ async function loadJobs() {
 editProfileBtn.addEventListener("click", () => {
   profileView.style.display = "none";
   editProfileBtn.style.display = "none";
-  profileForm.style.display = "flex";
+  // Clear the inline override rather than hardcoding "flex" — an inline style always beats
+  // the stylesheet regardless of specificity, which was silently defeating the responsive
+  // .profile-form-grid 2-column layout. Clearing it lets styles.css decide (grid ≥720px).
+  profileForm.style.display = "";
 });
 
 cancelProfileBtn.addEventListener("click", () => {
