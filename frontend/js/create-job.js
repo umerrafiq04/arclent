@@ -14,11 +14,8 @@ const savedIndicatorEl = document.getElementById("saved-indicator");
 const jobDrawer = document.getElementById("job-panel");
 const jobDrawerOverlay = document.getElementById("job-drawer-overlay");
 const jobDetailsToggle = document.getElementById("job-details-toggle");
-const jobDetailsToggleMobile = document.getElementById("job-details-toggle-mobile");
 const jobDetailsClose = document.getElementById("job-details-close");
 const jobDetailsDot = document.getElementById("job-details-dot");
-const jobDetailsDotMobile = document.getElementById("job-details-dot-mobile");
-const navToggle = document.getElementById("nav-toggle");
 const topNav = document.querySelector(".top-nav");
 
 let sessionId = null;
@@ -314,7 +311,6 @@ function renderEditingBanner(data) {
 function updateJobDetailsAttention(data) {
   const needsAttention = data.phase === "publish_confirm" || data.phase === "editing";
   jobDetailsDot.classList.toggle("visible", needsAttention);
-  if (jobDetailsDotMobile) jobDetailsDotMobile.classList.toggle("visible", needsAttention);
 }
 
 function renderJobPanel(data) {
@@ -703,7 +699,6 @@ if (window.visualViewport) {
 }
 
 jobDetailsToggle.addEventListener("click", openJobDrawer);
-if (jobDetailsToggleMobile) jobDetailsToggleMobile.addEventListener("click", openJobDrawer);
 jobDetailsClose.addEventListener("click", closeJobDrawer);
 jobDrawerOverlay.addEventListener("click", closeJobDrawer);
 document.addEventListener("keydown", (e) => {

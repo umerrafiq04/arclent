@@ -235,37 +235,52 @@ a {
 
 @media (max-width: 768px) {
   .app-header {
+    position: relative;
     flex-wrap: wrap;
     padding: 8px 10px;
     row-gap: 8px;
-    justify-content: space-between;
+    justify-content: flex-start;
+    /* Faint decorative wordmark, painted as a background image (not a real child) so it can
+       never intercept taps or shift flex layout — the brand text itself is hidden below to
+       make room for real page actions, but the name still quietly lives in the header. */
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='240' height='48'%3E%3Ctext x='50%25' y='50%25' dominant-baseline='middle' text-anchor='middle' font-family='Arial, Helvetica, sans-serif' font-weight='800' font-size='22' letter-spacing='4' fill='%23034f46' fill-opacity='0.055'%3EARCLENT%3C/text%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    /* Anchored to row 1's fixed height (not the header box as a whole) — the header grows
+       taller when the dropdown opens, and centering on the whole box would drag the mark down
+       into the dropdown list instead of leaving it in row 1 where it belongs. */
+    background-position: center 24px;
   }
 
-  /* Row 1 is just brand, then whichever single header-action buttons opt in (see
-     .header-actions .btn below — most pages only have one, e.g. "+ Post a New Job"), then the
-     toggle — spaced evenly by justify-content:space-between. .header-actions itself becomes
-     `display:contents` so its buttons act as direct siblings of brand/toggle here, each getting
-     its own even gap, rather than staying clumped as one group. Secondary actions (Job Details,
-     Edit Company on create-job.html) move into the .top-nav dropdown instead of competing for
-     row-1 space — see .top-nav-mobile-only below — so row 1 never has to wrap. */
+  /* Brand text traded for room to keep the real page actions (Start New Job, Job Details, …)
+     on one uncluttered row — see the background watermark above for where the name went. */
   .app-header .brand {
-    order: 1;
-    font-size: 14px;
+    display: none;
   }
 
   .header-actions {
     display: contents;
   }
 
+  /* Primary, frequently-used actions stay on row 1, grouped left-to-right in a fixed, explicit
+     order (not source order) — Start New Job first, Job Details right after it. The hamburger
+     is pushed to the true top-right corner via its own margin-left:auto rather than
+     justify-content:space-between, so it stays flush right regardless of how many — or how few
+     — action buttons a given page has. */
   .header-actions .btn {
-    order: 2;
     padding: 6px 14px;
     font-size: 12.5px;
   }
 
+  #start-new-btn {
+    order: 2;
+  }
+
+  #job-details-toggle {
+    order: 3;
+  }
+
   /* Secondary, less-frequent page actions — kept out of row 1 entirely on mobile so it never
      wraps; only surfaced inside the dropdown, alongside the page nav links. */
-  #job-details-toggle,
   #edit-company-btn {
     display: none;
   }
@@ -274,13 +289,14 @@ a {
     display: block;
     width: 30px;
     height: 30px;
-    order: 3;
+    order: 4;
     flex-shrink: 0;
+    margin-left: auto;
   }
 
   .top-nav {
     display: none;
-    order: 4;
+    order: 5;
     width: 100%;
     flex-direction: column;
     gap: 4px;
@@ -292,8 +308,8 @@ a {
     display: flex;
   }
 
-  /* Mirrors of Job Details / Edit Company for the mobile dropdown only — hidden by default
-     (see the non-media-query rule below) so they never show up in the desktop top-nav. */
+  /* Mirror of Edit Company for the mobile dropdown only — hidden by default (see the
+     non-media-query rule below) so it never shows up in the desktop top-nav. */
   .top-nav-mobile-only {
     display: block;
   }
