@@ -80,6 +80,7 @@ a {
 }
 
 .app-header {
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -92,6 +93,21 @@ a {
   box-shadow: var(--shadow-sm);
 }
 
+/* True dead-center Dashboard/Public Jobs/Log out on every page, regardless of how wide the
+   brand or header-actions cluster happens to be on that particular page — justify-content:
+   space-between alone only equalizes the two gaps around it, which visually centers it only
+   when both siblings happen to be the same width (they aren't, page to page). Scoped to
+   min-width:1200px (this app's own "Desktop" tier) so it never risks overlapping the
+   wider header-actions clusters (e.g. create-job.html's three buttons) at tablet widths. */
+@media (min-width: 1200px) {
+  .top-nav {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%);
+  }
+}
+
 .app-header .brand {
   font-family: var(--font-heading);
   font-weight: 800;
@@ -102,12 +118,21 @@ a {
   gap: 2px;
 }
 
-.app-header .brand small {
+/* Wraps .brand + .app-header-subtitle as one visual unit on desktop (so space-between/centering
+   treats "Arclent Dashboard" as a single left-hand group, same as plain "Arclent" elsewhere) —
+   and becomes `display: contents` on mobile (see the max-width:768px block) so the two pieces
+   can be placed on separate rows independently instead of being stuck together. */
+.brand-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.app-header-subtitle {
   font-family: var(--font-heading);
   font-weight: 500;
   font-size: 13px;
   color: var(--color-text-muted);
-  margin-left: 8px;
   letter-spacing: 0;
 }
 
@@ -242,14 +267,34 @@ a {
   }
 
   /* Brand stays visible on every page except the AI Recruiter chat (see the body:has(.workspace)
-     override below) — there, Start New Job + Job Details need the row to themselves. */
+     override below) — there, Start New Job + Job Details need the row to themselves.
+     .brand-group becomes `display: contents` so .brand and .app-header-subtitle act as
+     independent flex items of .app-header itself — needed so the subtitle (below) can be
+     placed on its own row while .brand stays up on row 1 with the buttons and toggle. */
+  .brand-group {
+    display: contents;
+  }
+
   .app-header .brand {
     order: 1;
     font-size: 14px;
   }
 
-  /* Chat is the one page where the brand gives way to Start New Job + Job Details. */
-  body:has(.workspace) .app-header .brand {
+  /* Page label (e.g. "Dashboard", "Public Jobs") — its own row 2, below the buttons/toggle
+     row, not crammed inline with them. Ordered after .nav-toggle (order 4) so it wraps onto a
+     fresh line without pushing the toggle down with it — flex-wrap lays items out strictly in
+     order, so anything after a width:100% item starts a new line, but the toggle's order (4)
+     comes BEFORE this (5), so it's already placed on row 1 before this line-break happens. */
+  .app-header-subtitle {
+    order: 5;
+    width: 100%;
+    font-size: 12.5px;
+  }
+
+  /* Chat is the one page where the brand (and its subtitle, if any) gives way to Start New Job
+     + Job Details. */
+  body:has(.workspace) .app-header .brand,
+  body:has(.workspace) .app-header-subtitle {
     display: none;
   }
 
@@ -289,7 +334,7 @@ a {
 
   .top-nav {
     display: none;
-    order: 5;
+    order: 6;
     width: 100%;
     flex-direction: column;
     gap: 4px;
