@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, interactive-widget=resizes-content" />
   <title>AI Recruiter — Arclent</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -19,6 +19,10 @@
     </nav>
     <button id="nav-toggle" class="nav-toggle" type="button" aria-label="Toggle menu">☰</button>
     <div class="header-actions">
+      <button type="button" id="job-details-toggle" class="btn">
+        Job Details
+        <span id="job-details-dot" class="job-details-dot" hidden></span>
+      </button>
       <a href="/recruiter.html" class="btn" id="edit-company-btn">Edit Company</a>
       <button id="start-new-btn" class="btn btn-primary" type="button">Start New Job</button>
     </div>
@@ -26,12 +30,6 @@
 
   <main class="workspace">
     <section id="chat-panel" class="panel">
-      <div class="chat-toolbar">
-        <button type="button" id="job-details-toggle" class="btn btn-small">
-          Job Details
-          <span id="job-details-dot" class="job-details-dot" hidden></span>
-        </button>
-      </div>
       <div id="message-list"></div>
       <div id="error-banner-slot"></div>
       <div id="attachment-chip-slot"></div>

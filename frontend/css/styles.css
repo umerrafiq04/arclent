@@ -61,6 +61,12 @@ body:has(.workspace) {
   flex-direction: column;
   height: 100vh;
   height: 100dvh;
+  /* --app-vh is set from window.visualViewport.height by create-job.js and kept in sync on
+     resize/scroll. CSS dvh alone is unreliable for the on-screen keyboard specifically (Safari
+     never shrinks it for the keyboard at all; Android Chrome's behavior varies by version), so
+     this is what actually keeps the composer pinned directly above the keyboard, Gemini-style,
+     instead of leaving a stale gap or letting the drawer's fixed positioning misbehave. */
+  height: var(--app-vh, 100dvh);
 }
 
 h1, h2, h3, h4, h5, h6 {
@@ -759,16 +765,6 @@ a {
   gap: 10px;
 }
 
-/* Slim bar above the conversation — just the Job Details toggle, right-aligned. Nothing
-   else lives here; the point is to keep the chat itself completely uncluttered. */
-.chat-toolbar {
-  flex-shrink: 0;
-  display: flex;
-  justify-content: flex-end;
-  padding: 10px 14px;
-  border-bottom: 1px solid var(--color-border);
-}
-
 .job-details-dot {
   display: inline-block;
   width: 7px;
@@ -787,15 +783,23 @@ a {
   background: rgba(20, 24, 22, 0.45);
   opacity: 0;
   pointer-events: none;
-  transition: opacity 0.2s ease;
+  visibility: hidden;
+  transition: opacity 0.2s ease, visibility 0s linear 0.2s;
   z-index: 150;
 }
 
 .job-drawer-overlay.open {
   opacity: 1;
   pointer-events: auto;
+  visibility: visible;
+  transition: opacity 0.2s ease, visibility 0s linear 0s;
 }
 
+/* position:fixed + the mobile on-screen keyboard is a known source of misplaced elements on
+   some mobile browsers (fixed elements resolving against the wrong viewport mid-transition).
+   Closed state adds `visibility:hidden` on top of the translateX so the drawer genuinely can't
+   paint anywhere on screen — belt-and-suspenders alongside the --app-vh fix above — rather than
+   relying on the transform alone to keep it off-screen. */
 .job-drawer {
   position: fixed;
   top: 0;
@@ -808,12 +812,15 @@ a {
   border-bottom: none;
   border-right: none;
   transform: translateX(100%);
-  transition: transform 0.25s ease;
+  visibility: hidden;
+  transition: transform 0.25s ease, visibility 0s linear 0.25s;
   z-index: 151;
 }
 
 .job-drawer.open {
   transform: translateX(0);
+  visibility: visible;
+  transition: transform 0.25s ease, visibility 0s linear 0s;
 }
 
 @media (max-width: 640px) {

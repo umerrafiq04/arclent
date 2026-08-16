@@ -667,6 +667,10 @@ startNewBtn.addEventListener("click", () => {
 });
 
 function openJobDrawer() {
+  // Drop the keyboard before opening — Job Details is reached from the header now, not the
+  // composer, so there's no reason to keep the keyboard up (and leaving it up is exactly what
+  // was making fixed-position elements misbehave on mobile while it was open).
+  chatInput.blur();
   jobDrawer.classList.add("open");
   jobDrawerOverlay.classList.add("open");
 }
@@ -674,6 +678,20 @@ function openJobDrawer() {
 function closeJobDrawer() {
   jobDrawer.classList.remove("open");
   jobDrawerOverlay.classList.remove("open");
+}
+
+// CSS dvh alone doesn't reliably shrink for the on-screen keyboard (Safari never does; Android
+// Chrome varies by version), which is what let the drawer/keyboard visually collide. Mirroring
+// the real visual viewport height into a custom property is what actually keeps the composer
+// pinned directly above the keyboard on every mobile browser.
+function syncAppHeight() {
+  if (!window.visualViewport) return;
+  document.documentElement.style.setProperty("--app-vh", `${window.visualViewport.height}px`);
+}
+if (window.visualViewport) {
+  syncAppHeight();
+  window.visualViewport.addEventListener("resize", syncAppHeight);
+  window.visualViewport.addEventListener("scroll", syncAppHeight);
 }
 
 jobDetailsToggle.addEventListener("click", openJobDrawer);
