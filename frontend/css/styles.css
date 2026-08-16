@@ -214,6 +214,13 @@ a {
   color: var(--color-text);
 }
 
+/* Mobile-dropdown-only mirrors of header actions (Job Details, Edit Company on
+   create-job.html) — hidden here on desktop; shown inside the max-width:768px block below,
+   inside the dropdown only, never in the desktop top-nav row. */
+.top-nav-mobile-only {
+  display: none;
+}
+
 .nav-toggle {
   display: none;
   background: none;
@@ -234,11 +241,13 @@ a {
     justify-content: space-between;
   }
 
-  /* Everything lives on row 1: brand, any header action buttons, then the toggle — all as
-     independent items spaced evenly by justify-content:space-between (not bunched together
-     on the left with one big auto-margin gap before the toggle). .header-actions itself
-     becomes `display:contents` so its buttons act as direct siblings of brand/toggle here,
-     each getting its own even gap, rather than staying clumped as one group. */
+  /* Row 1 is just brand, then whichever single header-action buttons opt in (see
+     .header-actions .btn below — most pages only have one, e.g. "+ Post a New Job"), then the
+     toggle — spaced evenly by justify-content:space-between. .header-actions itself becomes
+     `display:contents` so its buttons act as direct siblings of brand/toggle here, each getting
+     its own even gap, rather than staying clumped as one group. Secondary actions (Job Details,
+     Edit Company on create-job.html) move into the .top-nav dropdown instead of competing for
+     row-1 space — see .top-nav-mobile-only below — so row 1 never has to wrap. */
   .app-header .brand {
     order: 1;
     font-size: 14px;
@@ -250,18 +259,15 @@ a {
 
   .header-actions .btn {
     order: 2;
-    padding: 4px 0;
-    font-size: 11px;
-    border: none;
-    background: none;
-    box-shadow: none;
-    color: var(--color-text-muted);
-    white-space: nowrap;
+    padding: 6px 14px;
+    font-size: 12.5px;
   }
 
-  .header-actions .btn.btn-primary {
-    color: var(--color-primary-dark);
-    font-weight: 800;
+  /* Secondary, less-frequent page actions — kept out of row 1 entirely on mobile so it never
+     wraps; only surfaced inside the dropdown, alongside the page nav links. */
+  #job-details-toggle,
+  #edit-company-btn {
+    display: none;
   }
 
   .nav-toggle {
@@ -284,6 +290,12 @@ a {
 
   .top-nav.open {
     display: flex;
+  }
+
+  /* Mirrors of Job Details / Edit Company for the mobile dropdown only — hidden by default
+     (see the non-media-query rule below) so they never show up in the desktop top-nav. */
+  .top-nav-mobile-only {
+    display: block;
   }
 
   .top-nav a,
@@ -765,13 +777,21 @@ a {
   gap: 10px;
 }
 
+/* display:none by default and toggled via .visible (not the `hidden` attribute) — an author
+   rule setting `display` on this element would otherwise always beat the UA stylesheet's
+   `[hidden] { display: none }`, since author-origin rules win over user-agent-origin rules
+   regardless of specificity. That silently made this dot permanently visible before. */
 .job-details-dot {
-  display: inline-block;
+  display: none;
   width: 7px;
   height: 7px;
   margin-left: 6px;
   border-radius: 50%;
   background: var(--color-danger);
+}
+
+.job-details-dot.visible {
+  display: inline-block;
 }
 
 /* Job Information drawer — a fixed overlay, not a second column, so it never competes with

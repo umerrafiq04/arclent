@@ -14,8 +14,12 @@ const savedIndicatorEl = document.getElementById("saved-indicator");
 const jobDrawer = document.getElementById("job-panel");
 const jobDrawerOverlay = document.getElementById("job-drawer-overlay");
 const jobDetailsToggle = document.getElementById("job-details-toggle");
+const jobDetailsToggleMobile = document.getElementById("job-details-toggle-mobile");
 const jobDetailsClose = document.getElementById("job-details-close");
 const jobDetailsDot = document.getElementById("job-details-dot");
+const jobDetailsDotMobile = document.getElementById("job-details-dot-mobile");
+const navToggle = document.getElementById("nav-toggle");
+const topNav = document.querySelector(".top-nav");
 
 let sessionId = null;
 let currentPhase = null;
@@ -309,7 +313,8 @@ function renderEditingBanner(data) {
 
 function updateJobDetailsAttention(data) {
   const needsAttention = data.phase === "publish_confirm" || data.phase === "editing";
-  jobDetailsDot.hidden = !needsAttention;
+  jobDetailsDot.classList.toggle("visible", needsAttention);
+  if (jobDetailsDotMobile) jobDetailsDotMobile.classList.toggle("visible", needsAttention);
 }
 
 function renderJobPanel(data) {
@@ -671,6 +676,9 @@ function openJobDrawer() {
   // composer, so there's no reason to keep the keyboard up (and leaving it up is exactly what
   // was making fixed-position elements misbehave on mobile while it was open).
   chatInput.blur();
+  // On mobile, Job Details is reached via the hamburger dropdown — close it so it doesn't sit
+  // open behind the drawer.
+  if (topNav) topNav.classList.remove("open");
   jobDrawer.classList.add("open");
   jobDrawerOverlay.classList.add("open");
 }
@@ -695,6 +703,7 @@ if (window.visualViewport) {
 }
 
 jobDetailsToggle.addEventListener("click", openJobDrawer);
+if (jobDetailsToggleMobile) jobDetailsToggleMobile.addEventListener("click", openJobDrawer);
 jobDetailsClose.addEventListener("click", closeJobDrawer);
 jobDrawerOverlay.addEventListener("click", closeJobDrawer);
 document.addEventListener("keydown", (e) => {

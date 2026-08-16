@@ -15,13 +15,18 @@
     <nav class="top-nav">
       <a href="/recruiter.html">Dashboard</a>
       <a href="/jobs.html">Public Jobs</a>
+      <button type="button" id="job-details-toggle-mobile" class="top-nav-logout top-nav-mobile-only">
+        Job Details
+        <span id="job-details-dot-mobile" class="job-details-dot"></span>
+      </button>
+      <a href="/recruiter.html" class="top-nav-mobile-only">Edit Company</a>
       <button type="button" id="logout-btn" class="top-nav-logout">Log out</button>
     </nav>
     <button id="nav-toggle" class="nav-toggle" type="button" aria-label="Toggle menu">☰</button>
     <div class="header-actions">
       <button type="button" id="job-details-toggle" class="btn">
         Job Details
-        <span id="job-details-dot" class="job-details-dot" hidden></span>
+        <span id="job-details-dot" class="job-details-dot"></span>
       </button>
       <a href="/recruiter.html" class="btn" id="edit-company-btn">Edit Company</a>
       <button id="start-new-btn" class="btn btn-primary" type="button">Start New Job</button>
