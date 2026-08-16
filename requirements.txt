@@ -1,0 +1,11 @@
+fastapi
+uvicorn[standard]
+pydantic>=2
+python-dotenv
+langgraph
+langgraph-checkpoint-sqlite
+langchain-core
+langchain-mistralai
+pypdf
+python-multipart
+argon2-cffi>=23

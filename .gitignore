@@ -1,0 +1,14 @@
+.claude/
+.env
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+venv/
+.venv/
+
+# Local SQLite data — never ship dev/test data; Railway (or wherever this deploys) starts
+# with a fresh DB that init_db() creates on first boot.
+database/*.sqlite
+database/*.sqlite-shm
+database/*.sqlite-wal
+database/*.db

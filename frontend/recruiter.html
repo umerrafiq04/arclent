@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Recruiter Dashboard — Arclent</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700&family=Inter:wght@700;800;900&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/css/styles.css" />
+</head>
+<body>
+  <header class="app-header">
+    <div class="brand">Arclent <small>Dashboard</small></div>
+    <nav class="top-nav">
+      <a href="/recruiter.html" class="active">Dashboard</a>
+      <a href="/jobs.html">Public Jobs</a>
+      <button type="button" id="logout-btn" class="top-nav-logout">Log out</button>
+    </nav>
+    <button id="nav-toggle" class="nav-toggle" type="button" aria-label="Toggle menu">☰</button>
+    <div class="header-actions">
+      <a href="/create-job.html" class="btn btn-primary">+ Post a New Job</a>
+    </div>
+  </header>
+
+  <main class="page-container">
+    <h1 id="company-name" class="page-title">Loading…</h1>
+
+    <div class="stat-row">
+      <div class="stat-card">
+        <div class="stat-value" id="stat-total">—</div>
+        <div class="stat-label">Jobs Posted</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value" id="stat-published">—</div>
+        <div class="stat-label">Published</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value" id="stat-drafts">—</div>
+        <div class="stat-label">Drafts</div>
+      </div>
+    </div>
+
+    <section class="card">
+      <div class="card-header">
+        <h2>Company Profile</h2>
+        <button id="edit-profile-btn" class="btn" type="button">Edit Company Profile</button>
+      </div>
+      <div id="profile-view"></div>
+      <form id="profile-form" class="profile-form" style="display: none">
+        <label>Company Name<input type="text" name="company_name" /></label>
+        <label>Industry<input type="text" name="industry" /></label>
+        <label>Website<input type="text" name="website" /></label>
+        <label>Headquarters<input type="text" name="headquarters" /></label>
+        <label>Company Overview<textarea name="company_overview" rows="3"></textarea></label>
+        <label>Company Culture<textarea name="company_culture" rows="3"></textarea></label>
+        <label>Benefits<textarea name="benefits" rows="3"></textarea></label>
+        <label>Work-Life Balance<textarea name="work_life_balance" rows="2"></textarea></label>
+        <label>Why Join Us<textarea name="why_join_us" rows="2"></textarea></label>
+        <div class="form-actions">
+          <button type="submit" class="btn btn-primary">Save Company Profile</button>
+          <button type="button" id="cancel-profile-btn" class="btn">Cancel</button>
+        </div>
+      </form>
+    </section>
+
+    <section class="card">
+      <div class="card-header">
+        <h2>Recent Jobs</h2>
+      </div>
+      <div id="recent-jobs"></div>
+    </section>
+  </main>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/dates.js"></script>
+  <script src="/js/nav.js"></script>
+  <script src="/js/toast.js"></script>
+  <script src="/js/recruiter.js"></script>
+</body>
+</html>

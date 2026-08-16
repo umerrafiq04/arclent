@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AI Recruiter — Arclent</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700&family=Inter:wght@700;800;900&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/css/styles.css" />
+</head>
+<body>
+  <header class="app-header">
+    <div class="brand">Arclent</div>
+    <nav class="top-nav">
+      <a href="/recruiter.html">Dashboard</a>
+      <a href="/jobs.html">Public Jobs</a>
+      <button type="button" id="logout-btn" class="top-nav-logout">Log out</button>
+    </nav>
+    <button id="nav-toggle" class="nav-toggle" type="button" aria-label="Toggle menu">☰</button>
+    <div class="header-actions">
+      <a href="/recruiter.html" class="btn" id="edit-company-btn">Edit Company</a>
+      <button id="start-new-btn" class="btn btn-primary" type="button">Start New Job</button>
+    </div>
+  </header>
+
+  <main class="workspace">
+    <section id="chat-panel" class="panel">
+      <div id="message-list"></div>
+      <div id="error-banner-slot"></div>
+      <div id="attachment-chip-slot"></div>
+      <form id="chat-form" class="chat-input-row">
+        <input type="file" id="file-input" accept=".txt,.pdf" hidden />
+        <button
+          type="button"
+          id="attach-btn"
+          class="icon-btn"
+          title="Upload an existing JD (.txt or .pdf)"
+          aria-label="Upload an existing JD"
+        >+</button>
+        <textarea
+          id="chat-input"
+          rows="1"
+          placeholder="Type your message…"
+        ></textarea>
+        <button type="submit" class="btn btn-primary" id="send-btn">Send</button>
+      </form>
+    </section>
+
+    <section id="job-panel" class="panel">
+      <div class="panel-header">
+        <h2>Job Information</h2>
+        <span id="saved-indicator" class="saved-indicator"></span>
+      </div>
+      <div id="job-panel-body"></div>
+    </section>
+  </main>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/dates.js"></script>
+  <script src="/js/nav.js"></script>
+  <script src="/js/toast.js"></script>
+  <script src="/js/create-job.js"></script>
+</body>
+</html>

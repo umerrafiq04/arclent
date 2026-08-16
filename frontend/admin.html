@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Admin Dashboard — Arclent</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700&family=Inter:wght@700;800;900&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/css/styles.css" />
+</head>
+<body>
+  <header class="app-header">
+    <div class="brand">Arclent</div>
+    <nav class="top-nav">
+      <a href="/admin.html" class="active">Admin</a>
+      <a href="/jobs.html">Public Jobs</a>
+      <button type="button" id="logout-btn" class="top-nav-logout">Log out</button>
+    </nav>
+    <button id="nav-toggle" class="nav-toggle" type="button" aria-label="Toggle menu">☰</button>
+  </header>
+
+  <main class="page-container">
+    <div id="list-view">
+      <h1 class="page-title">Admin Dashboard</h1>
+
+      <div class="stat-row">
+        <div class="stat-card">
+          <div class="stat-value" id="stat-total">—</div>
+          <div class="stat-label">Total Jobs</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value" id="stat-published">—</div>
+          <div class="stat-label">Published</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value" id="stat-drafts">—</div>
+          <div class="stat-label">Drafts</div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="table-toolbar">
+          <input type="search" id="admin-search" class="search-input" placeholder="Search by title, company, or Job ID…" />
+        </div>
+        <div class="table-scroll">
+          <table class="admin-table">
+            <thead>
+              <tr>
+                <th>Job ID</th>
+                <th>Company</th>
+                <th>Title</th>
+                <th>Location</th>
+                <th>Work Mode</th>
+                <th>Status</th>
+                <th>Published</th>
+                <th>Last Updated</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="admin-table-body"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <div id="detail-view" style="display: none">
+      <a href="#" id="back-link" class="detail-back">&larr; Back to all jobs</a>
+      <div id="detail-body"></div>
+    </div>
+
+    <div id="company-view" style="display: none">
+      <a href="#" id="company-back-link" class="detail-back">&larr; Back to all jobs</a>
+      <div id="company-body"></div>
+    </div>
+  </main>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/dates.js"></script>
+  <script src="/js/nav.js"></script>
+  <script src="/js/admin.js"></script>
+</body>
+</html>
