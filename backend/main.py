@@ -3,7 +3,7 @@ from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from backend.config import FRONTEND_ORIGIN
@@ -48,6 +48,11 @@ FRONTEND_DIR = Path(__file__).resolve().parent.parent / "frontend"
 @app.get("/auth")
 def auth_page() -> FileResponse:
     return FileResponse(str(FRONTEND_DIR / "auth.html"))
+
+
+@app.get("/")
+def root() -> RedirectResponse:
+    return RedirectResponse(url="/auth")
 
 
 if FRONTEND_DIR.exists():
