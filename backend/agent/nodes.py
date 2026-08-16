@@ -479,6 +479,20 @@ def route_after_apply(state: GraphState) -> str:
             return "generate_jd"
         return END
 
+    # The recruiter just gave a finish phrase ("that's all", etc.) and apply_updates already
+    # moved phase to "summary" because the hard floor is met — analyze_turn's reply text
+    # promises to summarize and generate right now (per the FINISH_COLLECTING prompt guidance),
+    # so this must actually fire this turn rather than silently ending and leaving that promise
+    # unfulfilled until the recruiter sends a separate "generate" message. apply_updates only
+    # ever sets phase to "summary" from within the "collecting" branch, so this can't misfire on
+    # an edit to an already-published job (that path stays in "editing"/"published" instead).
+    if (
+        intent == Intent.FINISH_COLLECTING.value
+        and state.get("phase") == "summary"
+        and not (state.get("missing_essential") or [])
+    ):
+        return "generate_jd"
+
     if intent == Intent.REQUEST_REFINEMENT.value and jd_versions and state.get("selected_version"):
         return "refine_jd"
 

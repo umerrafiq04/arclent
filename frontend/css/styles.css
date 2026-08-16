@@ -179,6 +179,18 @@ a {
   box-shadow: 0 4px 10px rgba(3, 79, 70, 0.28);
 }
 
+.btn-outline {
+  background: var(--color-surface);
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+}
+
+.btn-outline:hover {
+  background: var(--color-accent-bg);
+  border-color: var(--color-primary-dark);
+  color: var(--color-primary-dark);
+}
+
 .btn-accent {
   background: var(--color-accent);
   border-color: var(--color-accent);
