@@ -281,8 +281,12 @@ def apply_updates(state: GraphState, config: RunnableConfig) -> dict:
     # actually optional, never when this turn just flagged it essential for the role, and never
     # when the reply isn't actually posing a question this turn (the model doesn't reliably
     # clear this back to null on a turn that just moves on, e.g. after acknowledging a skip).
+    # Checking for "?" anywhere (not just as the last character) matters: the model sometimes
+    # appends a clarifying example after the question mark ("...or tools?" -> "...or tools? For
+    # example, Python, Java...") which previously made rstrip().endswith("?") false and silently
+    # dropped both the Skip button and every chip on an obviously-a-question turn.
     asking_about_field = analysis.get("asking_about_field")
-    reply_is_a_question = analysis.get("response", "").rstrip().endswith("?")
+    reply_is_a_question = "?" in analysis.get("response", "")
     if (
         asking_about_field not in OPTIONAL_SKIPPABLE_FIELDS
         or asking_about_field in missing

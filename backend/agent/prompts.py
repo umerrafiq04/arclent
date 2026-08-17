@@ -70,6 +70,9 @@ unasked. Every checklist question MUST set `asking_about_field` to that field na
 this" button — the recruiter may always skip any of these by clicking it or saying so, at which point treat it as
 resolved and move to the next checklist item (never ask about it again this conversation). A recruiter's finish
 phrase (FINISH_COLLECTING) always lets you skip the rest of the checklist immediately and move to summarizing.
+Do not bundle a checklist question with anything else in the same `response` — no "and also, what about X?", no
+trailing second question, no illustrative example that itself asks something. One clean question, one question
+mark, then stop — the next field waits for the next turn, even if it feels efficient to ask two things at once.
 - selected_version: set to "1" or "2" when the recruiter names a preferred JD version this turn (e.g. "I prefer 2",
   "use version 1", "the second one"), otherwise leave it null.
 - asking_about_field: when `response` is a question asking the recruiter for ONE specific field, AND that field is
@@ -80,14 +83,20 @@ phrase (FINISH_COLLECTING) always lets you skip the rest of the checklist immedi
   the recruiter skips (clicks "Skip this" or says things like "I don't have that", "skip it", "no answer for that",
   "not applicable"), acknowledge briefly, leave that field empty, and move on to the next relevant question (or to
   summarizing, if nothing else is needed) — never ask about that same field again this conversation.
-- suggested_options: when `response` asks a question with natural short discrete answers, give 2-4 short, specific,
-  contextually-relevant quick replies the recruiter could tap instead of typing — e.g. asking about work_mode ->
-  ["Remote", "Hybrid", "Onsite"]; employment_type -> ["Full-time", "Part-time", "Contract", "Internship"]; asking
-  what role they're hiring for with no title yet -> a few plausible common titles; asking about experience level ->
-  a few plausible bands like ["0-1 years", "2-3 years", "4-6 years", "7+ years"]. Tailor these to what's already
-  known (company profile, job_title, job_category) rather than generic filler. Leave this empty when the question
-  has no sensible small set of answers (e.g. asking for a specific number, an open-ended "anything else to add?",
-  or any non-question turn) — never invent options just to fill the list. This is purely a UI convenience the
+- suggested_options: MANDATORY, non-empty, whenever `response` ends in a question — this is not optional or
+  situational, every single question you ask must come with 2-4 tappable quick replies, no exceptions. Concretely:
+  * work_mode -> ["Remote", "Hybrid", "Onsite"]
+  * employment_type -> ["Full-time", "Part-time", "Contract", "Internship"]
+  * experience -> plausible bands for this role, e.g. ["0-1 years", "2-3 years", "4-6 years", "7+ years"]
+  * job_title not yet known ("what role are you hiring for?") -> 3-4 plausible common titles
+  * "any other required/preferred skills?" -> 3-4 real, specific skill/tool names genuinely standard for this
+    role/title (never generic filler like "Other" or "Something else")
+  * "anything else to add?" / "ready to move on?" -> ["That's all", "Add more details"]
+  * asking whether to generate/publish now -> ["Yes, generate it", "Not yet"] or ["Yes, publish it", "Not yet"]
+  Tailor every one of these to what's already known (company profile, job_title, job_category) rather than generic
+  filler — a Data Analyst's skill suggestions must differ from a Video Editor's. The ONLY time this may be empty is
+  when `response` is a statement with no question at all (e.g. a plain acknowledgment, an error message, an
+  off-topic redirect) — if you asked anything, this must be populated. This is purely a UI convenience the
   recruiter can tap instead of typing; it changes nothing about how the reply is interpreted once given.
 - intent should be FINISH_COLLECTING whenever the recruiter signals they're done providing details, using phrases
   like: {finish_phrases}, or clear equivalents. When that happens, do not keep asking optional questions — if the

@@ -407,6 +407,194 @@ body.neo .neo-card .profile-view-row {
   border-bottom-style: dashed;
 }
 
+/* ================= Shared-class retargeting for auth.html / jobs.html / admin.html =================
+   These pages render most of their content dynamically (jobs.js/admin.js build cards, rows, and
+   badges in JS using the app's existing shared classes: .card, .btn, .stat-card, .job-card,
+   .badge, .admin-table, etc.) — rather than rewrite that JS or duplicate markup, retargeting the
+   EXISTING class names here under body.neo gets the same bold neo-brutalist look on every page
+   that opts in (via <body class="neo">) with zero JS/HTML changes to the dynamic parts. */
+
+body.neo .page-title {
+  font-weight: 900;
+  letter-spacing: -0.02em;
+}
+
+body.neo .card {
+  background: var(--neo-surface);
+  border: var(--neo-border-w) solid var(--neo-black);
+  border-radius: var(--neo-radius);
+  box-shadow: none;
+}
+
+body.neo .btn {
+  border: var(--neo-border-w) solid var(--neo-black);
+  border-radius: var(--radius-pill);
+  font-weight: 800;
+  background: var(--neo-surface);
+  color: var(--neo-black);
+  box-shadow: none;
+}
+
+body.neo .btn:hover {
+  background: var(--neo-bg);
+  transform: translateY(-1px);
+}
+
+body.neo .btn.btn-primary {
+  background: var(--neo-black);
+  border-color: var(--neo-black);
+  color: #fff;
+  box-shadow: none;
+}
+
+body.neo .btn.btn-primary:hover {
+  background: #000;
+}
+
+body.neo .btn.btn-outline {
+  background: var(--neo-surface);
+  border-color: var(--neo-black);
+  color: var(--neo-black);
+}
+
+/* ---------- Stat cards (admin.html) ---------- */
+
+body.neo .stat-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 16px;
+  margin-bottom: 20px;
+}
+
+body.neo .stat-card {
+  background: var(--neo-surface);
+  border: var(--neo-border-w) solid var(--neo-black);
+  border-radius: var(--neo-radius);
+  box-shadow: none;
+  padding: 18px 20px;
+}
+
+body.neo .stat-row .stat-card:nth-child(2) { background: var(--neo-yellow); }
+body.neo .stat-row .stat-card:nth-child(3) { background: var(--neo-green); }
+
+body.neo .stat-value {
+  font-weight: 900;
+  letter-spacing: -0.02em;
+}
+
+/* ---------- Badges (status pills — jobs.js/admin.js) ---------- */
+
+body.neo .badge {
+  border: 1.5px solid var(--neo-black);
+  border-radius: var(--radius-pill);
+  font-weight: 700;
+}
+
+body.neo .badge-published {
+  background: var(--neo-green);
+  color: var(--neo-black);
+}
+
+body.neo .badge-draft {
+  background: var(--neo-yellow);
+  color: var(--neo-black);
+}
+
+body.neo .badge-closed {
+  background: var(--neo-black);
+  color: #fff;
+  border-color: var(--neo-black);
+}
+
+/* ---------- Public job cards (jobs.html, rendered by jobs.js) ---------- */
+
+body.neo .job-card {
+  background: var(--neo-surface);
+  border: var(--neo-border-w) solid var(--neo-black);
+  border-radius: var(--neo-radius);
+  box-shadow: none;
+  transition: transform 0.12s ease;
+}
+
+body.neo .job-card:hover {
+  transform: translateY(-2px);
+  box-shadow: none;
+}
+
+body.neo .job-card-title {
+  font-weight: 800;
+}
+
+/* ---------- Admin table ---------- */
+
+body.neo .admin-table th {
+  border-bottom: var(--neo-border-w) solid var(--neo-black);
+  color: var(--neo-black);
+  font-weight: 800;
+}
+
+body.neo .admin-table td {
+  border-bottom: 1.5px solid var(--neo-border, #e6e1cf);
+}
+
+body.neo .admin-table tbody tr:hover {
+  background: var(--neo-bg);
+}
+
+body.neo .search-input {
+  border: var(--neo-border-w) solid var(--neo-black);
+  border-radius: 10px;
+  background: var(--neo-surface);
+}
+
+body.neo .job-list-row-clickable:hover {
+  background: var(--neo-bg);
+}
+
+/* ---------- Modal (apply-modal on jobs.html, etc.) ---------- */
+
+body.neo .modal {
+  background: var(--neo-surface);
+  border: var(--neo-border-w) solid var(--neo-black);
+  border-radius: var(--neo-radius);
+  box-shadow: none;
+}
+
+/* ---------- Auth page (auth.html) ---------- */
+
+body.neo .auth-card {
+  background: var(--neo-surface);
+  border: var(--neo-border-w) solid var(--neo-black);
+  border-radius: var(--neo-radius);
+  box-shadow: none;
+}
+
+body.neo .auth-tabs {
+  background: var(--neo-bg);
+  border: var(--neo-border-w) solid var(--neo-black);
+  border-radius: var(--radius-pill);
+}
+
+body.neo .auth-tab.active {
+  background: var(--neo-black);
+  color: #fff;
+  box-shadow: none;
+}
+
+body.neo .auth-form input {
+  border: var(--neo-border-w) solid var(--neo-black);
+  border-radius: 10px;
+}
+
+body.neo .auth-form input:focus {
+  outline: 2px solid var(--neo-yellow-dark);
+  outline-offset: 1px;
+}
+
+body.neo .app-header .neo-logo-mark {
+  background: var(--neo-black);
+}
+
 body.neo .neo-card #edit-profile-btn,
 body.neo .neo-card .form-actions .btn {
   border: var(--neo-border-w) solid var(--neo-black);

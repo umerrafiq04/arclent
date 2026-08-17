@@ -108,13 +108,16 @@
     clearChildren(errorSlot);
   }
 
+  const DEFAULT_ROLE_CHIPS = ["Software Engineer", "Data Analyst", "Product Manager", "Sales Executive"];
+
   function renderMessages(messages, suggestedOptions) {
     clearChildren(messageList);
     if (!messages || messages.length === 0) {
-      const empty = document.createElement("div");
-      empty.className = "empty-state";
-      empty.textContent = "What are you hiring for today? 👋";
-      messageList.appendChild(empty);
+      // Greeting is static (no analyze_turn call has happened yet), but it's still a real
+      // question — it gets the same chip treatment as every other AI question, not just plain
+      // centered text with nothing tappable under it.
+      const row = appendMessage("ai", "What are you hiring for today? 👋");
+      appendChips(row, DEFAULT_ROLE_CHIPS);
       return;
     }
     let lastAiRow = null;
