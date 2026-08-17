@@ -21,3 +21,4 @@ class GraphState(TypedDict):
     last_intent: str | None  # transient handoff from apply_updates -> route_after_apply
     jd_needs_refresh: bool  # transient: this turn's edit is what just made the JD stale
     asking_about_field: str | None  # optional JobState field the current AI question is about, if any
+    suggested_options: list[str]  # quick-reply chip labels for the current AI question, if any

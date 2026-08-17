@@ -80,6 +80,15 @@ phrase (FINISH_COLLECTING) always lets you skip the rest of the checklist immedi
   the recruiter skips (clicks "Skip this" or says things like "I don't have that", "skip it", "no answer for that",
   "not applicable"), acknowledge briefly, leave that field empty, and move on to the next relevant question (or to
   summarizing, if nothing else is needed) — never ask about that same field again this conversation.
+- suggested_options: when `response` asks a question with natural short discrete answers, give 2-4 short, specific,
+  contextually-relevant quick replies the recruiter could tap instead of typing — e.g. asking about work_mode ->
+  ["Remote", "Hybrid", "Onsite"]; employment_type -> ["Full-time", "Part-time", "Contract", "Internship"]; asking
+  what role they're hiring for with no title yet -> a few plausible common titles; asking about experience level ->
+  a few plausible bands like ["0-1 years", "2-3 years", "4-6 years", "7+ years"]. Tailor these to what's already
+  known (company profile, job_title, job_category) rather than generic filler. Leave this empty when the question
+  has no sensible small set of answers (e.g. asking for a specific number, an open-ended "anything else to add?",
+  or any non-question turn) — never invent options just to fill the list. This is purely a UI convenience the
+  recruiter can tap instead of typing; it changes nothing about how the reply is interpreted once given.
 - intent should be FINISH_COLLECTING whenever the recruiter signals they're done providing details, using phrases
   like: {finish_phrases}, or clear equivalents. When that happens, do not keep asking optional questions — if the
   hard floor (job_title + required_skills-or-responsibilities) is already satisfied, treat this as a green light to

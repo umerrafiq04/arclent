@@ -119,6 +119,7 @@ const api = {
       method: "PUT",
       body: JSON.stringify({ accepting_applications: accepting }),
     }),
+  deleteJob: (sessionId) => apiRequest(`/jobs/${encodeURIComponent(sessionId)}`, { method: "DELETE" }),
 
   getPublicJobs: () => apiRequest("/public/jobs"),
   getPublicJob: (jobId) => apiRequest(`/public/jobs/${encodeURIComponent(jobId)}`),

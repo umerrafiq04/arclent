@@ -176,6 +176,11 @@ def _migration_006_accepting_applications(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE jobs ADD COLUMN accepting_applications INTEGER NOT NULL DEFAULT 1")
 
 
+def _migration_007_deadline(conn: sqlite3.Connection) -> None:
+    if not _column_exists(conn, "jobs", "deadline"):
+        conn.execute("ALTER TABLE jobs ADD COLUMN deadline TEXT")
+
+
 MIGRATIONS = {
     1: _migration_001_users,
     2: _migration_002_auth_sessions,
@@ -183,6 +188,7 @@ MIGRATIONS = {
     4: _migration_004_jobs_owner,
     5: _migration_005_backfill_chat_sessions,
     6: _migration_006_accepting_applications,
+    7: _migration_007_deadline,
 }
 
 
@@ -288,6 +294,7 @@ def upsert_job_draft(
         "education": job_state.get("education"),
         "responsibilities": json.dumps(job_state.get("responsibilities", [])),
         "salary": job_state.get("salary"),
+        "deadline": job_state.get("deadline"),
         "additional_information": job_state.get("additional_information"),
         "company_overrides": json.dumps(job_state.get("company_overrides", {})),
         "jd_stale": 1 if jd_stale else 0,
@@ -430,6 +437,7 @@ def finalize_edit(session_id: str, job_state: dict, selected_jd: dict, selected_
         "education": job_state.get("education"),
         "responsibilities": json.dumps(job_state.get("responsibilities", [])),
         "salary": job_state.get("salary"),
+        "deadline": job_state.get("deadline"),
         "additional_information": job_state.get("additional_information"),
         "company_overrides": json.dumps(job_state.get("company_overrides", {})),
         "selected_jd": json.dumps(selected_jd),
@@ -461,10 +469,20 @@ def set_accepting_applications(session_id: str, accepting: bool, db_path: str = 
         return _row_to_dict(row)
 
 
+def delete_job(session_id: str, db_path: str = APP_DB_PATH) -> bool:
+    """Removes a job (draft or published) entirely. No soft-delete — nothing else in the
+    schema references a job row by foreign key once it's gone. Returns whether a row existed.
+    """
+    with get_connection(db_path) as conn:
+        cursor = conn.execute("DELETE FROM jobs WHERE session_id = ?", (session_id,))
+        conn.commit()
+        return cursor.rowcount > 0
+
+
 _JOB_LIST_COLUMNS = """
     jobs.id, jobs.job_id, jobs.session_id, jobs.company_id, jobs.job_title, jobs.job_category,
     jobs.experience, jobs.location, jobs.work_mode, jobs.employment_type, jobs.required_skills,
-    jobs.preferred_skills, jobs.status, jobs.accepting_applications, jobs.created_at,
+    jobs.preferred_skills, jobs.status, jobs.accepting_applications, jobs.deadline, jobs.created_at,
     jobs.updated_at, jobs.published_at,
     company_profile.company_name AS company_name
 """

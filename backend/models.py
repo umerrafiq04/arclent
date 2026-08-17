@@ -33,13 +33,14 @@ class JobState(BaseModel):
     education: str | None = None
     responsibilities: list[str] = Field(default_factory=list)
     salary: str | None = None
+    deadline: str | None = None
     additional_information: str | None = None
     company_overrides: dict[str, str] = Field(default_factory=dict)
 
 
 SCALAR_JOB_FIELDS = {
     "job_title", "job_category", "experience", "location", "work_mode",
-    "employment_type", "education", "salary", "additional_information",
+    "employment_type", "education", "salary", "deadline", "additional_information",
 }
 LIST_JOB_FIELDS = {"required_skills", "preferred_skills", "responsibilities"}
 COMPANY_OVERRIDE_FIELDS = {
@@ -53,7 +54,7 @@ COMPANY_OVERRIDE_FIELDS = {
 # only when that field isn't currently flagged essential for this specific role (see apply_updates).
 OPTIONAL_SKIPPABLE_FIELDS = {
     "job_category", "experience", "location", "work_mode", "employment_type",
-    "education", "salary", "additional_information", "preferred_skills",
+    "education", "salary", "deadline", "additional_information", "preferred_skills",
 }
 
 
@@ -108,6 +109,7 @@ class TurnAnalysis(BaseModel):
     missing_essential: list[str] = Field(default_factory=list)
     selected_version: Literal["1", "2"] | None = None
     asking_about_field: str | None = None
+    suggested_options: list[str] = Field(default_factory=list)
     response: str
 
 
@@ -118,6 +120,7 @@ class JobDescriptionDraft(BaseModel):
     employment_type: str | None = None
     location: str | None = None
     work_mode: str | None = None
+    deadline: str | None = None
     company_overview: str | None = None
     job_summary: str | None = None
     about_role: str | None = None

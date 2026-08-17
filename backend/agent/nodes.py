@@ -80,6 +80,7 @@ def _job_state_from_record(record: dict) -> dict:
         "education": record.get("education"),
         "responsibilities": record.get("responsibilities") or [],
         "salary": record.get("salary"),
+        "deadline": record.get("deadline"),
         "additional_information": record.get("additional_information"),
         "company_overrides": record.get("company_overrides") or {},
     }
@@ -289,6 +290,12 @@ def apply_updates(state: GraphState, config: RunnableConfig) -> dict:
     ):
         asking_about_field = None
 
+    # Same defense-in-depth as asking_about_field above — only ever surface chips on a turn
+    # that's actually posing a question, regardless of what the model returned.
+    suggested_options = analysis.get("suggested_options") or []
+    if not reply_is_a_question:
+        suggested_options = []
+
     return {
         "job_state": job_state,
         "phase": phase,
@@ -300,6 +307,7 @@ def apply_updates(state: GraphState, config: RunnableConfig) -> dict:
         "jd_needs_refresh": jd_needs_refresh,
         "last_response": analysis.get("response", ""),
         "asking_about_field": asking_about_field,
+        "suggested_options": suggested_options,
     }
 
 

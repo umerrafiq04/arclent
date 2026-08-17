@@ -7,6 +7,17 @@ const profileForm = document.getElementById("profile-form");
 const editProfileBtn = document.getElementById("edit-profile-btn");
 const cancelProfileBtn = document.getElementById("cancel-profile-btn");
 const recentJobsEl = document.getElementById("recent-jobs");
+const viewAllJobsBtn = document.getElementById("view-all-jobs-btn");
+const recruiterAvatarEl = document.getElementById("recruiter-avatar");
+const recruiterNameEl = document.getElementById("recruiter-name");
+const recruiterMetaEl = document.getElementById("recruiter-meta");
+const velocityActiveEl = document.getElementById("velocity-active");
+const velocityActiveFillEl = document.getElementById("velocity-active-fill");
+const velocityAcceptingEl = document.getElementById("velocity-accepting");
+const velocityAcceptingFillEl = document.getElementById("velocity-accepting-fill");
+
+let showAllJobs = false;
+let latestJobs = [];
 
 const PROFILE_FIELDS = [
   ["industry", "Industry"],
@@ -47,25 +58,8 @@ function populateForm(profile) {
   });
 }
 
-function statusBadges(job) {
-  const frag = document.createDocumentFragment();
-  const badge = document.createElement("span");
-  if (job.status === "published") {
-    badge.className = "badge badge-published";
-    badge.textContent = "Published";
-  } else {
-    badge.className = "badge badge-draft";
-    badge.textContent = "Draft";
-  }
-  frag.appendChild(badge);
-
-  if (job.status === "published" && !job.accepting_applications) {
-    const closedBadge = document.createElement("span");
-    closedBadge.className = "badge badge-closed";
-    closedBadge.textContent = "Applications Closed";
-    frag.appendChild(closedBadge);
-  }
-  return frag;
+function jobAvatarLetter(job) {
+  return (job.job_title || "?").trim().charAt(0).toUpperCase() || "?";
 }
 
 function renderRecentJobs(jobs) {
@@ -73,87 +67,169 @@ function renderRecentJobs(jobs) {
   if (jobs.length === 0) {
     const empty = document.createElement("div");
     empty.className = "empty-state";
-    empty.textContent = "No jobs yet — click \"Post a New Job\" to create your first one.";
+    empty.textContent = "No jobs yet — click \"+ Post a Job\" to create your first one.";
     recentJobsEl.appendChild(empty);
     return;
   }
-  jobs.slice(0, 8).forEach((job) => {
+  const visible = showAllJobs ? jobs : jobs.slice(0, 8);
+  visible.forEach((job) => {
     const row = document.createElement("div");
-    row.className = "job-list-row";
+    row.className = "neo-job-row";
 
-    const idCell = document.createElement("div");
-    idCell.className = "job-id-cell";
-    idCell.textContent = job.job_id || "—";
+    const avatar = document.createElement("span");
+    avatar.className = "neo-job-avatar";
+    avatar.textContent = jobAvatarLetter(job);
+    row.appendChild(avatar);
 
-    const titleCell = document.createElement("div");
-    titleCell.className = "job-title-cell";
-    titleCell.textContent = job.job_title;
+    const main = document.createElement("div");
+    main.className = "neo-job-main";
 
-    const metaCell = document.createElement("div");
-    metaCell.className = "job-meta-cell";
-    metaCell.textContent = [job.location, job.work_mode].filter(Boolean).join(" · ") || "—";
+    const title = document.createElement("div");
+    title.className = "neo-job-title";
+    title.textContent = job.job_title;
+    main.appendChild(title);
 
-    const dateCell = document.createElement("div");
-    dateCell.className = "job-meta-cell";
-    dateCell.title = formatAbsolute(job.updated_at);
-    dateCell.textContent = formatRelative(job.updated_at);
+    const tags = document.createElement("div");
+    tags.className = "neo-job-tags";
 
-    const actionsCell = document.createElement("div");
-    actionsCell.className = "job-actions-cell";
-    if (job.status === "published") {
-      const viewLink = document.createElement("a");
-      viewLink.className = "btn btn-small";
-      viewLink.textContent = "View";
-      viewLink.href = `/jobs.html?job_id=${encodeURIComponent(job.job_id)}`;
-      const editLink = document.createElement("a");
-      editLink.className = "btn btn-small";
-      editLink.textContent = "Edit Job";
-      editLink.href = `/create-job.html?session_id=${encodeURIComponent(job.session_id)}`;
-      actionsCell.appendChild(viewLink);
-      actionsCell.appendChild(editLink);
-      actionsCell.appendChild(hiringToggleButton(job));
-    } else {
-      const continueLink = document.createElement("a");
-      continueLink.className = "btn btn-small btn-primary";
-      continueLink.textContent = "Continue";
-      continueLink.href = `/create-job.html?session_id=${encodeURIComponent(job.session_id)}`;
-      actionsCell.appendChild(continueLink);
+    if (job.employment_type) {
+      const empPill = document.createElement("span");
+      empPill.className = "neo-pill";
+      empPill.textContent = job.employment_type;
+      tags.appendChild(empPill);
     }
 
-    row.appendChild(idCell);
-    row.appendChild(titleCell);
-    row.appendChild(metaCell);
-    row.appendChild(dateCell);
-    row.appendChild(statusBadges(job));
-    row.appendChild(actionsCell);
+    const statusPill = document.createElement("span");
+    if (job.status === "published") {
+      statusPill.className = job.accepting_applications ? "neo-pill neo-pill-active" : "neo-pill neo-pill-closed";
+      statusPill.textContent = job.accepting_applications ? "Active" : "Closed";
+    } else {
+      statusPill.className = "neo-pill";
+      statusPill.textContent = "Draft";
+    }
+    tags.appendChild(statusPill);
+
+    const time = document.createElement("span");
+    time.className = "neo-job-time";
+    time.title = formatAbsolute(job.updated_at);
+    time.textContent = formatRelative(job.updated_at);
+    tags.appendChild(time);
+
+    main.appendChild(tags);
+    row.appendChild(main);
+
+    const actions = document.createElement("div");
+    actions.className = "neo-job-actions";
+    actions.appendChild(manageButton(job));
+
+    const boostBtn = document.createElement("button");
+    boostBtn.type = "button";
+    boostBtn.className = "neo-btn neo-btn-small neo-btn-yellow";
+    boostBtn.textContent = "Boost";
+    boostBtn.title = "Coming soon";
+    boostBtn.disabled = true;
+    actions.appendChild(boostBtn);
+
+    row.appendChild(actions);
     recentJobsEl.appendChild(row);
   });
 }
 
-function hiringToggleButton(job) {
+function manageButton(job) {
+  const wrap = document.createElement("div");
+  wrap.style.position = "relative";
+
   const btn = document.createElement("button");
   btn.type = "button";
-  btn.className = "btn btn-small";
-  btn.textContent = job.accepting_applications ? "Stop Hiring" : "Reopen Hiring";
-  btn.addEventListener("click", async () => {
-    const nowClosing = job.accepting_applications;
-    const confirmed = window.confirm(
-      nowClosing
-        ? `Stop accepting applications for ${job.job_title} (${job.job_id})? The listing stays published — this only closes it to new applicants.`
-        : `Reopen ${job.job_title} (${job.job_id}) to new applications?`
-    );
+  btn.className = "neo-btn neo-btn-small";
+  btn.textContent = "Manage ▾";
+
+  const menu = document.createElement("div");
+  menu.className = "neo-manage-menu";
+
+  if (job.status === "published") {
+    const viewLink = document.createElement("button");
+    viewLink.type = "button";
+    viewLink.textContent = "View listing";
+    viewLink.addEventListener("click", () => {
+      window.location.href = `/jobs.html?job_id=${encodeURIComponent(job.job_id)}`;
+    });
+    menu.appendChild(viewLink);
+  }
+
+  const editBtn = document.createElement("button");
+  editBtn.type = "button";
+  editBtn.textContent = job.status === "published" ? "Edit" : "Continue editing";
+  editBtn.addEventListener("click", () => {
+    menu.classList.remove("open");
+    if (window.openJobModal) window.openJobModal(job.session_id);
+  });
+  menu.appendChild(editBtn);
+
+  if (job.status === "published") {
+    const toggleBtn = document.createElement("button");
+    toggleBtn.type = "button";
+    toggleBtn.textContent = job.accepting_applications ? "Stop Hiring" : "Reopen Hiring";
+    toggleBtn.addEventListener("click", async () => {
+      menu.classList.remove("open");
+      const nowClosing = job.accepting_applications;
+      const confirmed = window.confirm(
+        nowClosing
+          ? `Stop accepting applications for ${job.job_title} (${job.job_id})? The listing stays published — this only closes it to new applicants.`
+          : `Reopen ${job.job_title} (${job.job_id}) to new applications?`
+      );
+      if (!confirmed) return;
+      try {
+        await api.setJobAcceptingApplications(job.session_id, !job.accepting_applications);
+        showToast(nowClosing ? "Applications closed for this job." : "Job reopened to applications.", "success");
+        await loadJobs();
+      } catch (err) {
+        showToast(err.message || "Couldn't update hiring status. Please try again.", "error");
+      }
+    });
+    menu.appendChild(toggleBtn);
+  }
+
+  const deleteBtn = document.createElement("button");
+  deleteBtn.type = "button";
+  deleteBtn.className = "danger";
+  deleteBtn.textContent = "Delete";
+  deleteBtn.addEventListener("click", async () => {
+    menu.classList.remove("open");
+    const confirmed = window.confirm(`Permanently delete "${job.job_title}"? This can't be undone.`);
     if (!confirmed) return;
-    btn.disabled = true;
     try {
-      await api.setJobAcceptingApplications(job.session_id, !job.accepting_applications);
-      showToast(nowClosing ? "Applications closed for this job." : "Job reopened to applications.", "success");
+      await api.deleteJob(job.session_id);
+      showToast("Job deleted.", "success");
       await loadJobs();
     } catch (err) {
-      showToast(err.message || "Couldn't update hiring status. Please try again.", "error");
-      btn.disabled = false;
+      showToast(err.message || "Couldn't delete this job. Please try again.", "error");
     }
   });
-  return btn;
+  menu.appendChild(deleteBtn);
+
+  btn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    const wasOpen = menu.classList.contains("open");
+    document.querySelectorAll(".neo-manage-menu.open").forEach((m) => m.classList.remove("open"));
+    if (!wasOpen) menu.classList.add("open");
+  });
+
+  wrap.appendChild(btn);
+  wrap.appendChild(menu);
+  return wrap;
+}
+
+document.addEventListener("click", () => {
+  document.querySelectorAll(".neo-manage-menu.open").forEach((m) => m.classList.remove("open"));
+});
+
+if (viewAllJobsBtn) {
+  viewAllJobsBtn.addEventListener("click", () => {
+    showAllJobs = !showAllJobs;
+    viewAllJobsBtn.textContent = showAllJobs ? "Show Less" : "View All";
+    renderRecentJobs(latestJobs);
+  });
 }
 
 let currentProfile = null;
@@ -167,11 +243,21 @@ async function loadProfile() {
 
 async function loadJobs() {
   const jobs = await api.getJobs();
-  const published = jobs.filter((j) => j.status === "published").length;
+  latestJobs = jobs;
+  const published = jobs.filter((j) => j.status === "published");
   const drafts = jobs.filter((j) => j.status === "draft").length;
+  const accepting = published.filter((j) => j.accepting_applications).length;
   statTotal.textContent = jobs.length;
-  statPublished.textContent = published;
+  statPublished.textContent = published.length;
   statDrafts.textContent = drafts;
+
+  // Real, computable numbers only — no fabricated proposal/hire counts (that data doesn't
+  // exist in this schema yet).
+  velocityActiveEl.textContent = `${published.length} / ${jobs.length}`;
+  velocityActiveFillEl.style.width = jobs.length ? `${Math.round((published.length / jobs.length) * 100)}%` : "0%";
+  velocityAcceptingEl.textContent = published.length ? `${accepting} / ${published.length}` : "—";
+  velocityAcceptingFillEl.style.width = published.length ? `${Math.round((accepting / published.length) * 100)}%` : "0%";
+
   renderRecentJobs(jobs);
 }
 
@@ -225,14 +311,28 @@ logoutBtn.addEventListener("click", async () => {
   window.location.href = "/auth.html";
 });
 
+const postJobBtn = document.getElementById("post-job-btn");
+if (postJobBtn) {
+  postJobBtn.addEventListener("click", () => {
+    if (window.openJobModal) window.openJobModal();
+  });
+}
+
 async function init() {
   // Backend authorization is the real boundary (every /api/* call below re-checks it) — this
   // is purely so an unauthenticated visitor isn't shown an empty dashboard shell first.
+  let me;
   try {
-    await api.getMe();
+    me = await api.getMe();
   } catch (err) {
     window.location.href = "/auth.html";
     return;
+  }
+
+  if (me && me.name) {
+    recruiterNameEl.textContent = me.name;
+    recruiterAvatarEl.textContent = me.name.trim().charAt(0).toUpperCase() || "?";
+    recruiterMetaEl.textContent = me.company_name || "Arclent Member";
   }
 
   const loading = document.createElement("div");

@@ -94,6 +94,7 @@ def _to_response(session_id: str, state: dict) -> ChatResponse:
         jd_stale=state.get("jd_stale", False),
         job_record=job_record,
         asking_about_field=state.get("asking_about_field"),
+        suggested_options=state.get("suggested_options") or [],
     )
 
 

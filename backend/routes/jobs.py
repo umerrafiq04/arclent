@@ -1,7 +1,12 @@
+import csv
+import io
+
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import Response
 
 from backend.auth import get_current_recruiter
 from backend.database import (
+    delete_job,
     get_job_by_session_id,
     get_published_job_by_job_id,
     list_jobs_for_company,
@@ -20,6 +25,38 @@ def get_jobs_for_recruiter(user: dict = Depends(get_current_recruiter)) -> list[
     return list_jobs_for_company(user["company_id"])
 
 
+@router.get("/report")
+def get_jobs_report(user: dict = Depends(get_current_recruiter)) -> Response:
+    """CSV export of this company's own jobs — real fields only (title, status, location,
+    employment type, posted date, accepting-applications). No proposal/hire counts: there is
+    no applications-tracking table in this schema yet, so those numbers don't exist to export.
+    """
+    jobs = list_jobs_for_company(user["company_id"])
+    buffer = io.StringIO()
+    writer = csv.writer(buffer)
+    writer.writerow(
+        ["Job ID", "Title", "Status", "Employment Type", "Location", "Work Mode", "Posted Date", "Accepting Applications"]
+    )
+    for job in jobs:
+        writer.writerow(
+            [
+                job.get("job_id") or "",
+                job.get("job_title") or "",
+                job.get("status") or "",
+                job.get("employment_type") or "",
+                job.get("location") or "",
+                job.get("work_mode") or "",
+                job.get("published_at") or job.get("created_at") or "",
+                "Yes" if job.get("accepting_applications") else "No",
+            ]
+        )
+    return Response(
+        content=buffer.getvalue(),
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=arclent-jobs-report.csv"},
+    )
+
+
 @router.put("/{session_id}/accepting-applications")
 def put_accepting_applications(
     session_id: str,
@@ -35,6 +72,16 @@ def put_accepting_applications(
     if job["status"] != "published":
         raise HTTPException(status_code=400, detail="Only a published job can be opened or closed to applications.")
     return set_accepting_applications(session_id, body.accepting_applications)
+
+
+@router.delete("/{session_id}")
+def delete_job_route(session_id: str, user: dict = Depends(get_current_recruiter)) -> dict:
+    """Permanently removes a job (draft or published) belonging to the recruiter's own company."""
+    job = get_job_by_session_id(session_id)
+    if not job or job["company_id"] != user["company_id"]:
+        raise HTTPException(status_code=404, detail="Job not found")
+    delete_job(session_id)
+    return {"deleted": True}
 
 
 @public_router.get("")

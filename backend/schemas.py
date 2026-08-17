@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class ChatRequest(BaseModel):
@@ -27,6 +27,7 @@ class ChatResponse(BaseModel):
     jd_stale: bool
     job_record: dict | None = None
     asking_about_field: str | None = None  # optional field the latest AI question is about, if any
+    suggested_options: list[str] = Field(default_factory=list)  # chip labels for the latest AI question, if any
 
 
 class CompanyProfileUpdate(BaseModel):

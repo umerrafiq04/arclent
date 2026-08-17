@@ -8,11 +8,12 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700&family=Inter:wght@700;800;900&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="/css/styles.css" />
+  <link rel="stylesheet" href="/css/neo-dashboard.css" />
 </head>
-<body>
+<body class="neo">
   <header class="app-header">
     <div class="brand-group">
-      <div class="brand">Arclent</div>
+      <div class="brand"><span class="neo-logo-mark">A</span> Arclent</div>
       <small class="app-header-subtitle">Dashboard</small>
     </div>
     <nav class="top-nav">
@@ -22,63 +23,146 @@
     </nav>
     <button id="nav-toggle" class="nav-toggle" type="button" aria-label="Toggle menu">☰</button>
     <div class="header-actions">
-      <a href="/create-job.html" class="btn btn-outline">+ Post a New Job</a>
+      <div class="neo-recruiter-chip">
+        <span class="neo-recruiter-avatar" id="recruiter-avatar">?</span>
+        <span class="neo-recruiter-info">
+          <span class="neo-recruiter-name" id="recruiter-name">Recruiter</span>
+          <span class="neo-recruiter-meta" id="recruiter-meta">Arclent Member</span>
+        </span>
+      </div>
+      <button type="button" id="post-job-btn" class="neo-btn neo-btn-solid">+ Post a Job</button>
     </div>
   </header>
 
   <main class="page-container">
     <h1 id="company-name" class="page-title">Loading…</h1>
 
-    <div class="stat-row">
-      <div class="stat-card">
-        <div class="stat-value" id="stat-total">—</div>
-        <div class="stat-label">Jobs Posted</div>
+    <div class="neo-stat-row">
+      <div class="neo-card neo-stat-card">
+        <div class="neo-stat-label">Jobs Posted</div>
+        <div class="neo-stat-value" id="stat-total">—</div>
+        <span class="neo-stat-sub" id="stat-total-sub">Total</span>
       </div>
-      <div class="stat-card">
-        <div class="stat-value" id="stat-published">—</div>
-        <div class="stat-label">Published</div>
+      <div class="neo-card neo-stat-card yellow">
+        <div class="neo-stat-label">Published</div>
+        <div class="neo-stat-value" id="stat-published">—</div>
+        <span class="neo-stat-sub" id="stat-published-sub">Live</span>
       </div>
-      <div class="stat-card">
-        <div class="stat-value" id="stat-drafts">—</div>
-        <div class="stat-label">Drafts</div>
+      <div class="neo-card neo-stat-card green">
+        <div class="neo-stat-label">Drafts</div>
+        <div class="neo-stat-value" id="stat-drafts">—</div>
+        <span class="neo-stat-sub" id="stat-drafts-sub">In progress</span>
       </div>
     </div>
 
-    <section class="card">
-      <div class="card-header">
-        <h2>Recent Jobs</h2>
-      </div>
-      <div id="recent-jobs"></div>
-    </section>
+    <div class="neo-main-grid">
+      <div class="neo-main-col">
+        <section class="neo-card">
+          <div class="neo-card-header">
+            <h2>Recent Jobs</h2>
+            <button type="button" id="view-all-jobs-btn" class="neo-btn neo-btn-small">View All</button>
+          </div>
+          <div id="recent-jobs"></div>
+        </section>
 
-    <section class="card">
-      <div class="card-header">
-        <h2>Company Profile</h2>
-        <button id="edit-profile-btn" class="btn" type="button">Edit Company Profile</button>
+        <section class="neo-card">
+          <div class="neo-card-header">
+            <h2>Company Profile</h2>
+            <button id="edit-profile-btn" class="neo-btn neo-btn-small" type="button">Edit Company Profile</button>
+          </div>
+          <div id="profile-view"></div>
+          <form id="profile-form" class="profile-form profile-form-grid" style="display: none">
+            <label>Company Name<input type="text" name="company_name" /></label>
+            <label>Industry<input type="text" name="industry" /></label>
+            <label>Website<input type="text" name="website" /></label>
+            <label>Headquarters<input type="text" name="headquarters" /></label>
+            <label>Company Overview<textarea name="company_overview" rows="3"></textarea></label>
+            <label>Company Culture<textarea name="company_culture" rows="3"></textarea></label>
+            <label>Benefits<textarea name="benefits" rows="3"></textarea></label>
+            <label>Work-Life Balance<textarea name="work_life_balance" rows="2"></textarea></label>
+            <label>Why Join Us<textarea name="why_join_us" rows="2"></textarea></label>
+            <div class="form-actions">
+              <button type="submit" class="btn btn-primary">Save Company Profile</button>
+              <button type="button" id="cancel-profile-btn" class="btn">Cancel</button>
+            </div>
+          </form>
+        </section>
       </div>
-      <div id="profile-view"></div>
-      <form id="profile-form" class="profile-form profile-form-grid" style="display: none">
-        <label>Company Name<input type="text" name="company_name" /></label>
-        <label>Industry<input type="text" name="industry" /></label>
-        <label>Website<input type="text" name="website" /></label>
-        <label>Headquarters<input type="text" name="headquarters" /></label>
-        <label>Company Overview<textarea name="company_overview" rows="3"></textarea></label>
-        <label>Company Culture<textarea name="company_culture" rows="3"></textarea></label>
-        <label>Benefits<textarea name="benefits" rows="3"></textarea></label>
-        <label>Work-Life Balance<textarea name="work_life_balance" rows="2"></textarea></label>
-        <label>Why Join Us<textarea name="why_join_us" rows="2"></textarea></label>
-        <div class="form-actions">
-          <button type="submit" class="btn btn-primary">Save Company Profile</button>
-          <button type="button" id="cancel-profile-btn" class="btn">Cancel</button>
-        </div>
-      </form>
-    </section>
+
+      <aside class="neo-sidebar">
+        <section class="neo-card">
+          <div class="neo-card-header">
+            <h2>Hiring Velocity</h2>
+          </div>
+          <div class="neo-velocity-row"><span>Active jobs</span><span id="velocity-active">—</span></div>
+          <div class="neo-velocity-bar"><div class="neo-velocity-fill yellow" id="velocity-active-fill" style="width: 0%"></div></div>
+          <div class="neo-velocity-row"><span>Accepting applications</span><span id="velocity-accepting">—</span></div>
+          <div class="neo-velocity-bar"><div class="neo-velocity-fill green" id="velocity-accepting-fill" style="width: 0%"></div></div>
+          <a href="/api/jobs/report" download class="neo-btn neo-btn-solid" style="width: 100%; justify-content: center; margin-top: 4px;">⬇ Download Report</a>
+        </section>
+
+        <section class="neo-card">
+          <div class="neo-tip-title">💡 Pro tip</div>
+          <div class="neo-tip-body" id="pro-tip-body">
+            Jobs with a clear list of required skills get <mark>faster, better-matched</mark> applicants. Be specific about must-haves.
+          </div>
+          <div class="neo-tip-chips">
+            <span class="neo-pill">Retention</span>
+            <span class="neo-pill">Story</span>
+            <span class="neo-pill">Color</span>
+          </div>
+        </section>
+      </aside>
+    </div>
   </main>
+
+  <!-- ===== Post a Job / Arclent Copilot modal ===== -->
+  <div id="job-modal-overlay" class="job-modal-overlay" hidden>
+    <div class="job-modal" role="dialog" aria-modal="true" aria-label="Arclent Copilot">
+      <div class="job-modal-header">
+        <div class="job-modal-header-left">
+          <span class="neo-recruiter-avatar" style="background: var(--neo-yellow, #ffd23f);">AI</span>
+          <div>
+            <div class="job-modal-title">Arclent Copilot</div>
+            <div class="job-modal-subtitle" id="job-modal-status">drafting mode • auto-save</div>
+          </div>
+        </div>
+        <div class="job-modal-header-right">
+          <span class="neo-pill" id="job-modal-progress">New job</span>
+          <button type="button" id="job-modal-close" class="icon-btn" aria-label="Close">✕</button>
+        </div>
+      </div>
+
+      <div class="job-modal-body">
+        <section class="job-modal-chat">
+          <div id="jm-message-list" class="jm-message-list"></div>
+          <div id="jm-error-slot"></div>
+          <div id="jm-attachment-slot"></div>
+          <form id="jm-chat-form" class="chat-input-row">
+            <input type="file" id="jm-file-input" accept=".txt,.pdf" hidden />
+            <button type="button" id="jm-attach-btn" class="icon-btn" title="Upload an existing JD" aria-label="Upload an existing JD">+</button>
+            <textarea id="jm-chat-input" rows="1" placeholder="Type your message…"></textarea>
+            <button type="submit" class="btn btn-primary" id="jm-send-btn">Send</button>
+          </form>
+        </section>
+
+        <section class="job-modal-draft" id="jm-draft-pane">
+          <div class="jm-draft-empty" id="jm-draft-empty">
+            <div class="jm-draft-empty-icon">✦</div>
+            <h3>Your job draft will appear here</h3>
+            <p>Answer a few quick questions in chat — tap a suggestion or type your own. Arclent will craft a complete job post you can edit and publish.</p>
+          </div>
+          <div class="jm-draft-form" id="jm-draft-form" hidden></div>
+        </section>
+      </div>
+    </div>
+  </div>
 
   <script src="/js/api.js"></script>
   <script src="/js/dates.js"></script>
   <script src="/js/nav.js"></script>
   <script src="/js/toast.js"></script>
   <script src="/js/recruiter.js"></script>
+  <script src="/js/job-modal.js"></script>
 </body>
 </html>

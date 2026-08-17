@@ -1,0 +1,808 @@
+/* Neo-brutalist Recruiter Dashboard — scoped entirely under body.neo so it never leaks into
+   auth/public-jobs/admin, which keep the original teal/ivory Arclent look. Loaded only by
+   recruiter.html. Bold black borders, flat color blocking, hard edges instead of soft shadows —
+   a deliberate visual departure from the rest of the app, confined to this one page. */
+
+body.neo {
+  --neo-bg: #f2efe4;
+  --neo-surface: #ffffff;
+  --neo-black: #14140f;
+  --neo-yellow: #ffd23f;
+  --neo-yellow-dark: #f0b90b;
+  --neo-green: #3ddc84;
+  --neo-green-dark: #1fb865;
+  --neo-muted: #6b6858;
+  --neo-border-w: 2px;
+  --neo-radius: 16px;
+  --neo-radius-sm: 10px;
+  background: var(--neo-bg);
+}
+
+body.neo .app-header,
+body.neo .neo-card {
+  background: var(--neo-surface);
+  border: var(--neo-border-w) solid var(--neo-black);
+  border-radius: var(--neo-radius);
+  box-shadow: none;
+}
+
+/* ---------- Header ---------- */
+
+body.neo .app-header {
+  align-items: center;
+}
+
+body.neo .app-header .brand {
+  gap: 10px;
+}
+
+body.neo .neo-logo-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background: var(--neo-black);
+  color: #fff;
+  font-weight: 800;
+  font-size: 14px;
+  flex-shrink: 0;
+}
+
+body.neo .app-header .brand {
+  font-weight: 900;
+  letter-spacing: -0.02em;
+}
+
+body.neo .neo-recruiter-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 14px 6px 6px;
+  border: var(--neo-border-w) solid var(--neo-black);
+  border-radius: var(--radius-pill);
+  background: var(--neo-surface);
+}
+
+body.neo .neo-recruiter-avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background: var(--neo-yellow);
+  border: var(--neo-border-w) solid var(--neo-black);
+  font-weight: 800;
+  font-size: 13px;
+  flex-shrink: 0;
+}
+
+body.neo .neo-recruiter-info {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.25;
+}
+
+body.neo .neo-recruiter-name {
+  font-weight: 800;
+  font-size: 13px;
+}
+
+body.neo .neo-recruiter-meta {
+  font-size: 11.5px;
+  color: var(--neo-muted);
+  font-weight: 600;
+}
+
+body.neo .neo-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 20px;
+  border-radius: var(--radius-pill);
+  border: var(--neo-border-w) solid var(--neo-black);
+  font-family: var(--font-heading);
+  font-weight: 800;
+  font-size: 13.5px;
+  cursor: pointer;
+  white-space: nowrap;
+  background: var(--neo-surface);
+  color: var(--neo-black);
+  transition: transform 0.1s ease;
+}
+
+body.neo .neo-btn:hover {
+  transform: translateY(-1px);
+}
+
+body.neo .neo-btn:active {
+  transform: translateY(0);
+}
+
+body.neo .neo-btn-solid {
+  background: var(--neo-black);
+  color: #fff;
+}
+
+body.neo .neo-btn-yellow {
+  background: var(--neo-yellow);
+  color: var(--neo-black);
+}
+
+body.neo .neo-btn-small {
+  padding: 6px 14px;
+  font-size: 12px;
+}
+
+body.neo .neo-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+  transform: none;
+}
+
+/* ---------- Stat row ---------- */
+
+body.neo .neo-stat-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 16px;
+  margin-bottom: 20px;
+}
+
+body.neo .neo-stat-card {
+  padding: 18px 20px;
+}
+
+body.neo .neo-stat-card.yellow { background: var(--neo-yellow); }
+body.neo .neo-stat-card.green { background: var(--neo-green); }
+
+body.neo .neo-stat-label {
+  font-size: 11.5px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--neo-black);
+  opacity: 0.65;
+  margin-bottom: 6px;
+}
+
+body.neo .neo-stat-value {
+  font-size: 34px;
+  font-weight: 900;
+  letter-spacing: -0.02em;
+  line-height: 1;
+  margin-bottom: 12px;
+}
+
+body.neo .neo-stat-sub {
+  display: inline-flex;
+  padding: 4px 10px;
+  border-radius: var(--radius-pill);
+  border: 1.5px solid var(--neo-black);
+  background: var(--neo-surface);
+  font-size: 11.5px;
+  font-weight: 700;
+}
+
+/* ---------- Main grid: Recent Jobs + sidebar ---------- */
+
+body.neo .neo-main-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 320px;
+  gap: 20px;
+  align-items: start;
+}
+
+@media (max-width: 900px) {
+  body.neo .neo-main-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+body.neo .neo-card {
+  padding: 22px 24px;
+  margin-bottom: 20px;
+}
+
+body.neo .neo-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+}
+
+body.neo .neo-card-header h2 {
+  font-size: 18px;
+  margin: 0;
+  font-weight: 900;
+}
+
+/* ---------- Recent Jobs rows ---------- */
+
+body.neo .neo-job-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 0;
+  border-bottom: var(--neo-border-w) solid var(--neo-black);
+  flex-wrap: wrap;
+}
+
+body.neo .neo-job-row:last-child {
+  border-bottom: none;
+  padding-bottom: 0;
+}
+
+body.neo .neo-job-avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  border: var(--neo-border-w) solid var(--neo-black);
+  font-weight: 800;
+  font-size: 14px;
+  flex-shrink: 0;
+  background: var(--neo-yellow);
+}
+
+body.neo .neo-job-row:nth-child(3n+2) .neo-job-avatar { background: var(--neo-green); }
+body.neo .neo-job-row:nth-child(3n) .neo-job-avatar { background: var(--neo-surface); }
+
+body.neo .neo-job-main {
+  flex: 1 1 220px;
+  min-width: 0;
+}
+
+body.neo .neo-job-title {
+  font-weight: 800;
+  font-size: 15px;
+  margin-bottom: 6px;
+}
+
+body.neo .neo-job-tags {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+}
+
+body.neo .neo-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 10px;
+  border-radius: var(--radius-pill);
+  border: 1.5px solid var(--neo-black);
+  font-weight: 700;
+  font-size: 11.5px;
+  background: var(--neo-surface);
+}
+
+body.neo .neo-pill-active {
+  background: var(--neo-green);
+}
+
+body.neo .neo-pill-closed {
+  background: var(--neo-black);
+  color: #fff;
+}
+
+body.neo .neo-job-time {
+  color: var(--neo-muted);
+  font-weight: 600;
+  font-size: 11.5px;
+}
+
+body.neo .neo-job-actions {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+  position: relative;
+}
+
+/* ---------- Manage menu (popover) ---------- */
+
+body.neo .neo-manage-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 20;
+  min-width: 170px;
+  background: var(--neo-surface);
+  border: var(--neo-border-w) solid var(--neo-black);
+  border-radius: var(--neo-radius-sm);
+  padding: 6px;
+  display: none;
+  flex-direction: column;
+  gap: 2px;
+}
+
+body.neo .neo-manage-menu.open {
+  display: flex;
+}
+
+body.neo .neo-manage-menu button {
+  text-align: left;
+  padding: 8px 10px;
+  border: none;
+  background: none;
+  border-radius: 6px;
+  font-family: var(--font-heading);
+  font-weight: 700;
+  font-size: 13px;
+  cursor: pointer;
+  color: var(--neo-black);
+}
+
+body.neo .neo-manage-menu button:hover {
+  background: var(--neo-bg);
+}
+
+body.neo .neo-manage-menu button.danger {
+  color: #b3261e;
+}
+
+/* ---------- Sidebar ---------- */
+
+body.neo .neo-sidebar .neo-card {
+  padding: 20px 22px;
+}
+
+body.neo .neo-velocity-row {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12.5px;
+  font-weight: 700;
+  margin-bottom: 6px;
+}
+
+body.neo .neo-velocity-bar {
+  height: 8px;
+  border-radius: var(--radius-pill);
+  border: 1.5px solid var(--neo-black);
+  background: var(--neo-surface);
+  overflow: hidden;
+  margin-bottom: 16px;
+}
+
+body.neo .neo-velocity-fill {
+  height: 100%;
+}
+
+body.neo .neo-velocity-fill.yellow { background: var(--neo-yellow); }
+body.neo .neo-velocity-fill.green { background: var(--neo-green); }
+
+body.neo .neo-tip-title {
+  font-weight: 900;
+  font-size: 15px;
+  margin-bottom: 8px;
+}
+
+body.neo .neo-tip-body {
+  font-size: 13px;
+  line-height: 1.5;
+  margin-bottom: 14px;
+}
+
+body.neo .neo-tip-body mark {
+  background: var(--neo-yellow);
+  padding: 1px 4px;
+  border-radius: 4px;
+}
+
+body.neo .neo-tip-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+/* ---------- Company Profile section ---------- */
+
+body.neo .neo-card .profile-view-row {
+  border-bottom-color: var(--neo-black);
+  border-bottom-style: dashed;
+}
+
+body.neo .neo-card #edit-profile-btn,
+body.neo .neo-card .form-actions .btn {
+  border: var(--neo-border-w) solid var(--neo-black);
+  border-radius: var(--radius-pill);
+  font-weight: 800;
+  background: var(--neo-surface);
+}
+
+body.neo .neo-card .form-actions .btn.btn-primary {
+  background: var(--neo-black);
+  color: #fff;
+}
+
+body.neo .empty-state {
+  color: var(--neo-muted);
+}
+
+/* Mobile header order — matches the app-wide mobile header pattern (brand row 1, primary
+   action next to it, hamburger pinned top-right via margin-left:auto). The recruiter chip is
+   decorative context, not a primary action, so it steps aside here rather than competing with
+   Post a Job for the one row — reachable info, just not header-row real estate on a small
+   screen. */
+@media (max-width: 768px) {
+  body.neo .neo-recruiter-chip {
+    display: none;
+  }
+
+  body.neo #post-job-btn {
+    order: 2;
+    padding: 6px 14px;
+    font-size: 12.5px;
+  }
+}
+
+/* ================= Post a Job — Arclent Copilot modal ================= */
+/* A true modal (dashboard stays loaded, dimmed behind it) — not a drawer, not a page nav.
+   Uses the --neo-* tokens from body.neo above (inherited through the DOM regardless of
+   selector scoping) plus the existing global .message-row/.bubble/.chat-input-row/.icon-btn/
+   .attachment-chip/.error-banner primitives from styles.css for the chat pane, so the chat
+   itself looks and behaves exactly like the rest of the app's chat UI. */
+
+.job-modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 300;
+  background: rgba(20, 20, 15, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+
+.job-modal-overlay[hidden] {
+  display: none;
+}
+
+.job-modal {
+  width: 100%;
+  max-width: 1180px;
+  height: min(88vh, 900px);
+  background: var(--neo-surface, #fff);
+  border: 2px solid var(--neo-black, #14140f);
+  border-radius: 20px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.job-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 20px;
+  border-bottom: 2px solid var(--neo-black, #14140f);
+  flex-shrink: 0;
+}
+
+.job-modal-header-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.job-modal-title {
+  font-weight: 900;
+  font-size: 15px;
+}
+
+.job-modal-subtitle {
+  font-size: 12px;
+  color: var(--neo-muted, #6b6858);
+  font-weight: 600;
+}
+
+.job-modal-header-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.job-modal-body {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr);
+}
+
+@media (max-width: 860px) {
+  .job-modal-body {
+    grid-template-columns: 1fr;
+    grid-template-rows: 1fr 1fr;
+  }
+  .job-modal {
+    height: 94vh;
+  }
+}
+
+.job-modal-chat {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-right: 2px solid var(--neo-black, #14140f);
+  background: var(--neo-bg, #f2efe4);
+}
+
+@media (max-width: 860px) {
+  .job-modal-chat {
+    border-right: none;
+    border-bottom: 2px solid var(--neo-black, #14140f);
+  }
+}
+
+.jm-message-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.job-modal-chat .chat-input-row {
+  background: var(--neo-surface, #fff);
+  border-top: 2px solid var(--neo-black, #14140f);
+}
+
+.jm-chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-left: 34px;
+}
+
+.jm-chip {
+  padding: 7px 14px;
+  border-radius: var(--radius-pill);
+  border: 2px solid var(--neo-black, #14140f);
+  background: var(--neo-surface, #fff);
+  font-family: var(--font-heading);
+  font-weight: 700;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+
+.jm-chip:hover:not(:disabled) {
+  background: var(--neo-yellow, #ffd23f);
+}
+
+.jm-chip:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.job-modal-draft {
+  min-height: 0;
+  overflow-y: auto;
+  padding: 24px;
+}
+
+/* :not([hidden]) — an unconditional `display` here would override the native
+   [hidden]{display:none} UA rule regardless of the hidden attribute/property (author rules
+   always beat user-agent rules), which silently defeated the empty/filled toggle earlier. */
+.jm-draft-empty:not([hidden]) {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  color: var(--neo-muted, #6b6858);
+  padding: 0 30px;
+}
+
+.jm-draft-empty-icon {
+  width: 48px;
+  height: 48px;
+  border-radius: 12px;
+  background: var(--neo-yellow, #ffd23f);
+  border: 2px solid var(--neo-black, #14140f);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 22px;
+  margin-bottom: 16px;
+}
+
+.jm-draft-empty h3 {
+  font-size: 18px;
+  margin: 0 0 8px;
+  color: var(--neo-black, #14140f);
+}
+
+.jm-draft-empty p {
+  font-size: 13.5px;
+  line-height: 1.5;
+  max-width: 320px;
+}
+
+.jm-draft-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 18px;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.jm-draft-header h3 {
+  font-size: 18px;
+  margin: 0;
+  font-weight: 900;
+}
+
+.jm-version-toggle {
+  display: inline-flex;
+  border: 2px solid var(--neo-black, #14140f);
+  border-radius: var(--radius-pill);
+  overflow: hidden;
+}
+
+.jm-version-toggle button {
+  border: none;
+  background: var(--neo-surface, #fff);
+  padding: 6px 14px;
+  font-family: var(--font-heading);
+  font-weight: 700;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.jm-version-toggle button.active {
+  background: var(--neo-black, #14140f);
+  color: #fff;
+}
+
+.jm-field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin-bottom: 14px;
+}
+
+.jm-field-label {
+  font-size: 11.5px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--neo-muted, #6b6858);
+}
+
+.jm-field input,
+.jm-field select,
+.jm-field textarea {
+  font-family: inherit;
+  font-size: 14px;
+  padding: 9px 12px;
+  border: 2px solid var(--neo-black, #14140f);
+  border-radius: 10px;
+  color: var(--neo-black, #14140f);
+  background: var(--neo-surface, #fff);
+  resize: vertical;
+}
+
+.jm-field-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+}
+
+@media (max-width: 520px) {
+  .jm-field-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.jm-list-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 12px;
+  border: 2px solid var(--neo-black, #14140f);
+  border-radius: 10px;
+  margin-bottom: 6px;
+  font-size: 13.5px;
+  background: var(--neo-surface, #fff);
+}
+
+.jm-list-remove {
+  border: none;
+  background: none;
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--neo-muted, #6b6858);
+  flex-shrink: 0;
+}
+
+.jm-list-remove:hover {
+  color: #b3261e;
+}
+
+.jm-list-add {
+  display: flex;
+  gap: 8px;
+}
+
+.jm-list-add input {
+  flex: 1;
+  font-family: inherit;
+  font-size: 13.5px;
+  padding: 8px 12px;
+  border: 2px dashed var(--neo-black, #14140f);
+  border-radius: 10px;
+  background: var(--neo-surface, #fff);
+}
+
+.jm-section-title {
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--neo-muted, #6b6858);
+  margin: 16px 0 8px;
+}
+
+.jm-expandable {
+  border: 2px solid var(--neo-black, #14140f);
+  border-radius: 12px;
+  padding: 4px 14px;
+  margin: 18px 0;
+}
+
+.jm-expandable summary {
+  cursor: pointer;
+  font-weight: 800;
+  padding: 10px 0;
+  font-size: 13.5px;
+}
+
+.jm-expandable-body {
+  padding-bottom: 12px;
+  font-size: 13.5px;
+  line-height: 1.5;
+}
+
+.jm-expandable-body ul {
+  margin: 4px 0 0;
+  padding-left: 18px;
+}
+
+.jm-company-context {
+  border-top: 2px dashed var(--neo-black, #14140f);
+  padding-top: 12px;
+  margin-top: 8px;
+}
+
+.jm-draft-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 20px;
+  padding-top: 18px;
+  border-top: 2px solid var(--neo-black, #14140f);
+}
+
+.jm-draft-actions .neo-btn-solid {
+  margin-left: auto;
+}
+
+.jm-published-note {
+  margin-top: 14px;
+  padding: 12px 14px;
+  border: 2px solid var(--neo-green-dark, #1fb865);
+  background: var(--neo-green, #3ddc84);
+  border-radius: 10px;
+  font-size: 13.5px;
+  text-align: center;
+}
