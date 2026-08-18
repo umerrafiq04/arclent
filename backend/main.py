@@ -11,6 +11,7 @@ from backend.config import (
     BOOTSTRAP_ADMIN_EMAIL,
     BOOTSTRAP_ADMIN_NAME,
     BOOTSTRAP_ADMIN_PASSWORD,
+    BOOTSTRAP_DEMO_JOBS,
     FRONTEND_ORIGIN,
 )
 from backend.database import create_admin_or_attached_user, get_user_by_email, init_db
@@ -57,10 +58,23 @@ def _bootstrap_admin_if_configured() -> None:
     logger.info("Bootstrapped admin account for %s", email)
 
 
+def _bootstrap_demo_jobs_if_configured() -> None:
+    """Same "no DB shell access" workaround as _bootstrap_admin_if_configured above, for the
+    one-off Amazon/Google/Netflix demo companies + published jobs (see scripts/seed_demo_jobs.py).
+    Idempotent — seed() itself skips any company that already exists.
+    """
+    if not BOOTSTRAP_DEMO_JOBS:
+        return
+    from scripts.seed_demo_jobs import seed
+
+    seed()
+
+
 @app.on_event("startup")
 def on_startup() -> None:
     init_db()
     _bootstrap_admin_if_configured()
+    _bootstrap_demo_jobs_if_configured()
 
 
 app.include_router(auth.router)

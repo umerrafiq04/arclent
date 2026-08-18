@@ -3,11 +3,15 @@
 Bypasses the chat/LLM pipeline entirely (writes job rows + JD content directly via the same
 database functions the graph nodes use) — this is bulk demo data, not a real recruiter
 conversation, so there's no reason to burn Mistral calls (and risk 429s) generating it turn by
-turn. Safe to run once; re-running will fail loudly on the duplicate company/email names rather
-than silently duplicating data.
+turn. Idempotent: re-running (or importing seed() from main.py's startup hook) silently skips
+any company that already exists rather than duplicating data.
 
 Usage:
     python scripts/seed_demo_jobs.py
+
+Also importable as `from scripts.seed_demo_jobs import seed` — see BOOTSTRAP_DEMO_JOBS in
+backend/config.py for running this automatically on app startup (Railway has no working SSH
+path, same reason BOOTSTRAP_ADMIN_* exists).
 """
 
 import sys
@@ -804,7 +808,11 @@ def publish_job(company_id: int, company_name: str, owner_user_id: int, job: dic
     return result["job_id"]
 
 
-def main() -> None:
+def seed() -> None:
+    """Idempotent: silently skips any company whose name/recruiter email already exists, so this
+    is also safe to call from main.py's startup hook (see BOOTSTRAP_DEMO_JOBS in config.py) —
+    the same "no DB shell access on Railway" workaround already used for BOOTSTRAP_ADMIN_*.
+    """
     init_db()
     for entry in COMPANIES:
         try:
@@ -832,4 +840,4 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    seed()

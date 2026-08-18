@@ -24,3 +24,7 @@ COOKIE_SECURE = os.getenv("COOKIE_SECURE", "").lower() in ("1", "true", "yes") o
 BOOTSTRAP_ADMIN_EMAIL = os.getenv("BOOTSTRAP_ADMIN_EMAIL", "")
 BOOTSTRAP_ADMIN_PASSWORD = os.getenv("BOOTSTRAP_ADMIN_PASSWORD", "")
 BOOTSTRAP_ADMIN_NAME = os.getenv("BOOTSTRAP_ADMIN_NAME", "Admin")
+
+# Same "no DB shell access" problem, for the one-off demo data seed (see
+# scripts/seed_demo_jobs.py and main.py's startup hook). Unset in normal operation.
+BOOTSTRAP_DEMO_JOBS = os.getenv("BOOTSTRAP_DEMO_JOBS", "").lower() in ("1", "true", "yes")
