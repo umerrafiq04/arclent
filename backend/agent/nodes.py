@@ -154,13 +154,52 @@ def analyze_turn(state: GraphState) -> dict:
             "messages": [AIMessage(content=fallback.response)],
         }
 
+    updates: dict = {}
+    response_lower = (analysis.response or "").lower()
+    is_skills_followup = "?" in response_lower and ("skill" in response_lower or "respons" in response_lower)
+    followup_count = state.get("skills_followup_count", 0)
+    if is_skills_followup:
+        if followup_count >= _SKILLS_FOLLOWUP_CAP:
+            # Cap already hit — deterministically override the response instead of asking about
+            # skills/responsibilities yet again. Merge in this turn's own field_updates first so a
+            # message that named a field (e.g. "Add Python, and it's hybrid") isn't immediately
+            # re-asked about.
+            prospective_job_state = dict(state.get("job_state") or {})
+            prospective_job_state.update(analysis.field_updates or {})
+            next_field = _next_checklist_prompt(prospective_job_state)
+            if next_field:
+                question, field, chips = next_field
+                analysis = analysis.model_copy(
+                    update={
+                        "response": f"Got it, noted! {question}",
+                        "asking_about_field": field,
+                        "suggested_options": chips,
+                        "options_multi_select": False,
+                    }
+                )
+            else:
+                analysis = analysis.model_copy(
+                    update={
+                        "response": _READY_TO_GENERATE_RESPONSE,
+                        "asking_about_field": None,
+                        "suggested_options": [],
+                        "options_multi_select": False,
+                        "enough_information": True,
+                    }
+                )
+        else:
+            updates["skills_followup_count"] = followup_count + 1
+
     clean_response = _strip_markdown(analysis.response)
     dumped = analysis.model_dump(mode="json")
     dumped["response"] = clean_response
-    return {
-        "pending_analysis": dumped,
-        "messages": [AIMessage(content=clean_response)],
-    }
+    updates.update(
+        {
+            "pending_analysis": dumped,
+            "messages": [AIMessage(content=clean_response)],
+        }
+    )
+    return updates
 
 
 def _apply_list_operation(current: list[str], operation: str, values: list[str]) -> list[str]:
@@ -198,6 +237,45 @@ _DEFAULT_OPTIONS_BY_FIELD = {
     "experience": ["0-1 years", "2-3 years", "4-6 years", "7+ years"],
     "education": ["Bachelor's degree", "Master's degree", "Not required"],
 }
+
+# Prompt-only compliance for "ask about skills/responsibilities at most once" proved unreliable in
+# practice — the model kept re-asking "anything else?" after every single skill the recruiter
+# named, sometimes 10+ times in a row (each one a Mistral call, compounding rate-limit risk on top
+# of the frustration). SKILLS_FOLLOWUP_CAP deterministically cuts that off in analyze_turn below:
+# once this many skills/responsibilities-flavored questions have been asked across the whole
+# conversation, any further one gets swapped for a canned pivot to the next unresolved standard
+# checklist field instead of trusting the model to stop on its own.
+_SKILLS_FOLLOWUP_CAP = 2
+
+_CHECKLIST_ORDER = ["experience", "location", "work_mode", "employment_type"]
+_CHECKLIST_QUESTIONS = {
+    "experience": "How many years of experience should this role require?",
+    "location": 'Which city or region will this role be based in? You can also say "Worldwide" if it\'s fully remote.',
+    "work_mode": "Should this role be Remote, Hybrid, or Onsite?",
+    "employment_type": "Should this be a Full-time, Part-time, Contract, or Internship position?",
+}
+_CHECKLIST_CHIPS = {
+    "experience": _DEFAULT_OPTIONS_BY_FIELD["experience"],
+    "location": ["Worldwide", "New York", "London", "Bangalore"],
+    "work_mode": _DEFAULT_OPTIONS_BY_FIELD["work_mode"],
+    "employment_type": _DEFAULT_OPTIONS_BY_FIELD["employment_type"],
+}
+_READY_TO_GENERATE_RESPONSE = (
+    'Everything\'s captured for this role! Click "Generate Full Description" in the panel on the '
+    "right whenever you're ready."
+)
+
+
+def _next_checklist_prompt(job_state: dict) -> tuple[str, str, list[str]] | None:
+    """First unresolved field (in standard-checklist order) plus its canned question + chips, or
+    None once all four are set — used to deterministically pivot away from a capped-out
+    skills/responsibilities follow-up loop (see _SKILLS_FOLLOWUP_CAP) rather than leaving the
+    recruiter with an acknowledgment and no next question.
+    """
+    for field in _CHECKLIST_ORDER:
+        if not job_state.get(field):
+            return _CHECKLIST_QUESTIONS[field], field, _CHECKLIST_CHIPS[field]
+    return None
 
 # Last-resort keyword sniffing on the response TEXT — the model sometimes spells options out in
 # prose ("...4-6 years, or 7+ years?") without ALSO populating suggested_options, or asks a
