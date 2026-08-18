@@ -1,5 +1,7 @@
 from pydantic import BaseModel, Field
 
+from backend.models import ListOperation
+
 
 class ChatRequest(BaseModel):
     session_id: str | None = None
@@ -28,6 +30,20 @@ class ChatResponse(BaseModel):
     job_record: dict | None = None
     asking_about_field: str | None = None  # optional field the latest AI question is about, if any
     suggested_options: list[str] = Field(default_factory=list)  # chip labels for the latest AI question, if any
+    options_multi_select: bool = False  # whether the recruiter can tap several suggested_options before sending
+
+
+class JobStatePatch(BaseModel):
+    """Direct, silent job_state edit — the draft form uses this for field edits (title,
+    experience, salary, skills add/remove, company-context overrides, etc.) instead of sending a
+    chat message, so editing the draft never triggers a bot reply or an LLM call.
+    jd_text_updates edits the CURRENT job description draft's own text fields directly (e.g. the
+    summary) — same principle, a hand-edit shouldn't need an LLM refinement call either.
+    """
+    field_updates: dict[str, str] = Field(default_factory=dict)
+    list_operations: list[ListOperation] = Field(default_factory=list)
+    company_overrides: dict[str, str] = Field(default_factory=dict)
+    jd_text_updates: dict[str, str] = Field(default_factory=dict)
 
 
 class CompanyProfileUpdate(BaseModel):

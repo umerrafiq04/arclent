@@ -24,7 +24,6 @@
   let currentPhase = null;
   let pendingFile = null;
   let currentData = null;
-  let viewVersion = "1";
 
   function clearChildren(el) {
     while (el.firstChild) el.removeChild(el.firstChild);
@@ -50,21 +49,60 @@
     return row;
   }
 
-  function appendChips(afterRow, options) {
+  // Single-select: tapping a chip sends immediately (e.g. work mode, experience band, job
+  // title). Multi-select: tapping toggles the chip on/off, nothing sends until "Add Selected" —
+  // for questions like "any other required skills?" where picking several at once (Python + SQL
+  // + React) is the whole point. The bot decides which mode via options_multi_select per turn.
+  function appendChips(afterRow, options, multiSelect) {
     if (!options || options.length === 0) return;
     const row = document.createElement("div");
     row.className = "jm-chip-row";
-    options.forEach((opt) => {
-      const chip = document.createElement("button");
-      chip.type = "button";
-      chip.className = "jm-chip";
-      chip.textContent = opt;
-      chip.addEventListener("click", () => {
-        row.querySelectorAll(".jm-chip").forEach((c) => (c.disabled = true));
-        sendMessage(opt);
+
+    if (!multiSelect) {
+      options.forEach((opt) => {
+        const chip = document.createElement("button");
+        chip.type = "button";
+        chip.className = "jm-chip";
+        chip.textContent = opt;
+        chip.addEventListener("click", () => {
+          row.querySelectorAll(".jm-chip").forEach((c) => (c.disabled = true));
+          sendMessage(opt);
+        });
+        row.appendChild(chip);
       });
-      row.appendChild(chip);
-    });
+    } else {
+      const selected = new Set();
+      const confirmBtn = document.createElement("button");
+      confirmBtn.type = "button";
+      confirmBtn.className = "jm-chip-confirm";
+      confirmBtn.textContent = "Add Selected";
+      confirmBtn.disabled = true;
+      confirmBtn.addEventListener("click", () => {
+        row.querySelectorAll(".jm-chip, .jm-chip-confirm").forEach((c) => (c.disabled = true));
+        sendMessage(Array.from(selected).join(", "));
+      });
+
+      options.forEach((opt) => {
+        const chip = document.createElement("button");
+        chip.type = "button";
+        chip.className = "jm-chip jm-chip-toggle";
+        chip.textContent = opt;
+        chip.addEventListener("click", () => {
+          if (selected.has(opt)) {
+            selected.delete(opt);
+            chip.classList.remove("selected");
+          } else {
+            selected.add(opt);
+            chip.classList.add("selected");
+          }
+          confirmBtn.disabled = selected.size === 0;
+          confirmBtn.textContent = selected.size ? `Add Selected (${selected.size})` : "Add Selected";
+        });
+        row.appendChild(chip);
+      });
+      row.appendChild(confirmBtn);
+    }
+
     afterRow.insertAdjacentElement("afterend", row);
     messageList.scrollTop = messageList.scrollHeight;
   }
@@ -110,14 +148,14 @@
 
   const DEFAULT_ROLE_CHIPS = ["Software Engineer", "Data Analyst", "Product Manager", "Sales Executive"];
 
-  function renderMessages(messages, suggestedOptions) {
+  function renderMessages(messages, suggestedOptions, multiSelect) {
     clearChildren(messageList);
     if (!messages || messages.length === 0) {
       // Greeting is static (no analyze_turn call has happened yet), but it's still a real
       // question — it gets the same chip treatment as every other AI question, not just plain
-      // centered text with nothing tappable under it.
+      // centered text with nothing tappable under it. Always single-select (one role to start).
       const row = appendMessage("ai", "What are you hiring for today? 👋");
-      appendChips(row, DEFAULT_ROLE_CHIPS);
+      appendChips(row, DEFAULT_ROLE_CHIPS, false);
       return;
     }
     let lastAiRow = null;
@@ -127,7 +165,21 @@
       if (m.role !== "user") lastAiRow = row;
     });
     if (lastAiRow && suggestedOptions && suggestedOptions.length) {
-      appendChips(lastAiRow, suggestedOptions);
+      appendChips(lastAiRow, suggestedOptions, multiSelect);
+    }
+  }
+
+  // Direct, silent job_state edit — no chat message, no processing status, no bot reply. This
+  // is what every draft-form field commit calls instead of sendMessage.
+  async function patchField(patch) {
+    try {
+      const data = await api.patchJobState(sessionId, patch);
+      currentData = data;
+      currentPhase = data.phase;
+      renderDraftForm(data);
+      updateStatusBar(data);
+    } catch (err) {
+      showError(err.message || "Couldn't save that change. Please try again.");
     }
   }
 
@@ -143,6 +195,18 @@
     let input;
     if (opts.select) {
       input = document.createElement("select");
+      if (!value) {
+        // Without an explicit placeholder, an unset field would default to displaying its
+        // first real option as if it were already answered (a real browser <select> behavior,
+        // not a bug in the data) — misleading for exactly the kind of field this app needs to
+        // get right (e.g. Work Mode silently "looking like" Remote when nothing was said yet).
+        const placeholder = document.createElement("option");
+        placeholder.value = "";
+        placeholder.textContent = "Not set";
+        placeholder.disabled = true;
+        placeholder.selected = true;
+        input.appendChild(placeholder);
+      }
       opts.select.forEach((optVal) => {
         const o = document.createElement("option");
         o.value = optVal;
@@ -150,19 +214,23 @@
         if (optVal === value) o.selected = true;
         input.appendChild(o);
       });
-    } else if (opts.textarea) {
-      input = document.createElement("textarea");
-      input.rows = opts.rows || 3;
-      input.value = value || "";
+      // Selects have no natural "blur to commit" moment the way typed fields do — commit on
+      // change instead, immediately.
+      input.addEventListener("change", () => onCommit(input.value));
     } else {
-      input = document.createElement("input");
-      input.type = "text";
+      if (opts.textarea) {
+        input = document.createElement("textarea");
+        input.rows = opts.rows || 3;
+      } else {
+        input = document.createElement("input");
+        input.type = "text";
+      }
       input.value = value || "";
+      input.addEventListener("blur", () => {
+        const newVal = input.value.trim();
+        if (newVal !== (value || "")) onCommit(newVal);
+      });
     }
-    input.addEventListener("blur", () => {
-      const newVal = input.value.trim();
-      if (newVal && newVal !== (value || "")) onCommit(newVal);
-    });
     wrap.appendChild(input);
     return wrap;
   }
@@ -228,7 +296,7 @@
   function renderDraftForm(data) {
     const jobState = data.job_state || {};
     const jdVersions = data.jd_versions;
-    const hasJd = jdVersions && (jdVersions["1"] || jdVersions["2"]);
+    const hasJd = Boolean(jdVersions && jdVersions["1"]);
 
     if (!jobState.job_title && !hasJd) {
       draftEmpty.hidden = false;
@@ -239,36 +307,12 @@
     draftForm.hidden = false;
     clearChildren(draftForm);
 
-    if (data.selected_version) viewVersion = data.selected_version;
-    else if (jdVersions && !jdVersions[viewVersion]) viewVersion = Object.keys(jdVersions)[0] || "1";
-
     const header = document.createElement("div");
     header.className = "jm-draft-header";
     const headerTitle = document.createElement("h3");
     headerTitle.textContent = "Review & Edit Draft";
     header.appendChild(headerTitle);
-    if (hasJd && jdVersions["1"] && jdVersions["2"]) {
-      const toggle = document.createElement("div");
-      toggle.className = "jm-version-toggle";
-      ["1", "2"].forEach((v) => {
-        const btn = document.createElement("button");
-        btn.type = "button";
-        btn.textContent = `Version ${v}`;
-        // Reflects the backend's CONFIRMED selection, not just which version is being viewed —
-        // right after generation, selected_version is null (nothing confirmed yet, Publish
-        // stays disabled), so neither button shows active until one is actually clicked. A
-        // click always sends the confirmation, even for the version already on screen, since
-        // "being displayed" and "confirmed to the backend" aren't the same thing yet at that
-        // point — a no-op guard here previously left Publish permanently disabled.
-        btn.className = v === data.selected_version ? "active" : "";
-        btn.addEventListener("click", () => {
-          viewVersion = v;
-          sendMessage(`I prefer ${v}.`);
-        });
-        toggle.appendChild(btn);
-      });
-      header.appendChild(toggle);
-    } else {
+    if (hasJd) {
       const badge = document.createElement("span");
       badge.className = "neo-pill";
       badge.textContent = "AI GENERATED";
@@ -276,58 +320,72 @@
     }
     draftForm.appendChild(header);
 
-    const jd = (jdVersions && jdVersions[viewVersion]) || {};
+    const jd = (jdVersions && jdVersions["1"]) || {};
 
     draftForm.appendChild(
-      fieldRow("Job Title", jobState.job_title, (v) => sendMessage(`Change the job title to ${v}.`))
+      fieldRow("Job Title", jobState.job_title, (v) => patchField({ field_updates: { job_title: v } }))
     );
 
-    draftForm.appendChild(
-      fieldRow(
-        "Job Description",
-        jd.job_summary || "",
-        (v) => sendMessage(`Please refine the job description: update the summary to read: "${v}"`),
-        { textarea: true, rows: 4 }
-      )
-    );
+    if (hasJd) {
+      draftForm.appendChild(
+        fieldRow(
+          "Job Description",
+          jd.job_summary || "",
+          (v) => patchField({ jd_text_updates: { job_summary: v } }),
+          { textarea: true, rows: 4 }
+        )
+      );
+    }
 
     const grid1 = document.createElement("div");
     grid1.className = "jm-field-grid";
     grid1.appendChild(
-      fieldRow("Experience Level", jobState.experience, (v) => sendMessage(`Set the experience level to ${v}.`))
+      fieldRow("Experience Level", jobState.experience, (v) => patchField({ field_updates: { experience: v } }))
     );
     grid1.appendChild(
       fieldRow(
         "Employment Type",
         jobState.employment_type,
-        (v) => sendMessage(`Set the employment type to ${v}.`),
+        (v) => patchField({ field_updates: { employment_type: v } }),
         { select: ["Full-time", "Part-time", "Contract", "Internship"] }
       )
     );
     draftForm.appendChild(grid1);
 
+    // Location and Work Mode are deliberately separate fields — Location is an actual place
+    // (a city, or "Worldwide" for fully remote), Work Mode is the arrangement. Combining them
+    // used to send an ambiguous "set the location to X" instruction that could clobber either.
     const grid2 = document.createElement("div");
     grid2.className = "jm-field-grid";
-    grid2.appendChild(fieldRow("Salary Range", jobState.salary, (v) => sendMessage(`Set the salary range to ${v}.`)));
+    grid2.appendChild(
+      fieldRow("Location", jobState.location, (v) => patchField({ field_updates: { location: v } }))
+    );
     grid2.appendChild(
       fieldRow(
-        "Location",
-        [jobState.location, jobState.work_mode].filter(Boolean).join(" · "),
-        (v) => sendMessage(`Set the location to ${v}.`)
+        "Work Mode",
+        jobState.work_mode,
+        (v) => patchField({ field_updates: { work_mode: v } }),
+        { select: ["Remote", "Hybrid", "Onsite"] }
       )
     );
     draftForm.appendChild(grid2);
 
-    draftForm.appendChild(
-      fieldRow("Deadline", jobState.deadline, (v) => sendMessage(`Set the application deadline to ${v}.`))
+    const grid3 = document.createElement("div");
+    grid3.className = "jm-field-grid";
+    grid3.appendChild(
+      fieldRow("Salary Range", jobState.salary, (v) => patchField({ field_updates: { salary: v } }))
     );
+    grid3.appendChild(
+      fieldRow("Deadline", jobState.deadline, (v) => patchField({ field_updates: { deadline: v } }))
+    );
+    draftForm.appendChild(grid3);
 
     draftForm.appendChild(
       listEditor(
         "Responsibilities",
         jobState.responsibilities,
-        (v) => sendMessage(`Add "${v}" as a responsibility.`),
-        (v) => sendMessage(`Remove "${v}" from the responsibilities.`)
+        (v) => patchField({ list_operations: [{ field: "responsibilities", operation: "ADD", values: [v] }] }),
+        (v) => patchField({ list_operations: [{ field: "responsibilities", operation: "REMOVE", values: [v] }] })
       )
     );
 
@@ -335,8 +393,8 @@
       listEditor(
         "Required Skills",
         jobState.required_skills,
-        (v) => sendMessage(`Add ${v} as a required skill.`),
-        (v) => sendMessage(`Remove ${v} from the required skills.`)
+        (v) => patchField({ list_operations: [{ field: "required_skills", operation: "ADD", values: [v] }] }),
+        (v) => patchField({ list_operations: [{ field: "required_skills", operation: "REMOVE", values: [v] }] })
       )
     );
 
@@ -344,8 +402,8 @@
       listEditor(
         "Preferred Skills",
         jobState.preferred_skills,
-        (v) => sendMessage(`Add ${v} as a preferred skill.`),
-        (v) => sendMessage(`Remove ${v} from the preferred skills.`)
+        (v) => patchField({ list_operations: [{ field: "preferred_skills", operation: "ADD", values: [v] }] }),
+        (v) => patchField({ list_operations: [{ field: "preferred_skills", operation: "REMOVE", values: [v] }] })
       )
     );
 
@@ -402,10 +460,7 @@
         fieldRow(
           `${label} (this job only)`,
           current,
-          (v) =>
-            sendMessage(
-              `For this job specifically, use this ${label.toLowerCase()} instead of the default company profile: "${v}"`
-            ),
+          (v) => patchField({ company_overrides: { [key]: v } }),
           { textarea: true, rows: 2 }
         )
       );
@@ -415,12 +470,18 @@
     const actions = document.createElement("div");
     actions.className = "jm-draft-actions";
 
-    const regenBtn = document.createElement("button");
-    regenBtn.type = "button";
-    regenBtn.className = "neo-btn";
-    regenBtn.textContent = "⟳ Regenerate with AI";
-    regenBtn.addEventListener("click", () => sendMessage("Please regenerate the job description from scratch."));
-    actions.appendChild(regenBtn);
+    const generateBtn = document.createElement("button");
+    generateBtn.type = "button";
+    generateBtn.className = "neo-btn";
+    generateBtn.textContent = hasJd ? "⟳ Regenerate" : "✦ Generate Full Description";
+    generateBtn.addEventListener("click", () => {
+      sendMessage(
+        hasJd
+          ? "Please regenerate the job description from scratch."
+          : "Please generate the job description now using all the details provided."
+      );
+    });
+    actions.appendChild(generateBtn);
 
     const saveDraftBtn = document.createElement("button");
     saveDraftBtn.type = "button";
@@ -435,9 +496,7 @@
     const alreadyPublished = data.job_record && data.job_record.status === "published" && data.phase === "published";
     publishBtn.textContent = alreadyPublished ? "Published ✓" : data.phase === "editing" ? "Publish Edit →" : "Publish Job →";
     publishBtn.disabled = !hasJd || !data.selected_version || data.jd_stale || alreadyPublished;
-    publishBtn.addEventListener("click", () => {
-      sendMessage(data.phase === "editing" ? "Please publish this edit." : "Yes, please publish this job now.");
-    });
+    publishBtn.addEventListener("click", () => publishNow(publishBtn));
     actions.appendChild(publishBtn);
 
     draftForm.appendChild(actions);
@@ -445,12 +504,71 @@
     if (alreadyPublished && data.job_record) {
       const posted = document.createElement("div");
       posted.className = "jm-published-note";
-      posted.innerHTML = "";
       const strong = document.createElement("strong");
       strong.textContent = `✓ Published as ${data.job_record.job_id}`;
       posted.appendChild(strong);
       draftForm.appendChild(posted);
     }
+  }
+
+  // Publishing ONLY ever happens here — a direct API call the button makes, never a side effect
+  // of a chat message (see the backend's CONFIRM_PUBLISH guidance: chat can acknowledge, but
+  // only this endpoint actually flips the job live).
+  async function publishNow(button) {
+    clearError();
+    button.disabled = true;
+    const originalText = button.textContent;
+    button.textContent = "Publishing…";
+    try {
+      const data = await api.publishJob(sessionId);
+      currentData = data;
+      currentPhase = data.phase;
+      localStorage.removeItem(STORAGE_KEY);
+      renderMessages(data.messages, data.suggested_options, data.options_multi_select);
+      renderDraftForm(data);
+      updateStatusBar(data);
+      celebrate();
+      if (window.showToast) {
+        window.showToast(`Job ${data.job_record ? data.job_record.job_id : ""} published successfully.`, "success");
+      }
+      window.dispatchEvent(new CustomEvent("jobmodal:published"));
+    } catch (err) {
+      showError(err.message || "Couldn't publish this job. Please try again.");
+      button.disabled = false;
+      button.textContent = originalText;
+    }
+  }
+
+  // Lightweight, dependency-free confetti burst — no external library, just a handful of
+  // absolutely-positioned divs animated with the Web Animations API, matching the neo palette.
+  function celebrate() {
+    const colors = ["#ffd23f", "#3ddc84", "#14140f", "#ffffff"];
+    const container = document.createElement("div");
+    container.className = "jm-confetti";
+    const originX = window.innerWidth / 2;
+    const originY = window.innerHeight / 3;
+    for (let i = 0; i < 60; i++) {
+      const piece = document.createElement("span");
+      piece.className = "jm-confetti-piece";
+      piece.style.background = colors[i % colors.length];
+      piece.style.left = `${originX}px`;
+      piece.style.top = `${originY}px`;
+      const angle = Math.random() * Math.PI * 2;
+      const distance = 160 + Math.random() * 220;
+      const dx = Math.cos(angle) * distance;
+      const dy = Math.sin(angle) * distance + 120;
+      const rotate = Math.random() * 720 - 360;
+      container.appendChild(piece);
+      piece.animate(
+        [
+          { transform: "translate(0, 0) rotate(0deg)", opacity: 1 },
+          { transform: `translate(${dx}px, ${dy}px) rotate(${rotate}deg)`, opacity: 0 },
+        ],
+        { duration: 900 + Math.random() * 500, easing: "cubic-bezier(0.2, 0.8, 0.3, 1)" }
+      );
+    }
+    document.body.appendChild(container);
+    setTimeout(() => container.remove(), 1500);
   }
 
   function renderAttachmentChip() {
@@ -515,17 +633,13 @@
       sessionId = data.session_id;
       currentData = data;
       currentPhase = data.phase;
-      if (data.phase === "published") {
-        localStorage.removeItem(STORAGE_KEY);
-        if (window.showToast) window.showToast(`Job ${data.job_record ? data.job_record.job_id : ""} published successfully.`, "success");
-        window.dispatchEvent(new CustomEvent("jobmodal:published"));
-      } else {
+      if (data.phase !== "published") {
         localStorage.setItem(
           STORAGE_KEY,
           JSON.stringify({ session_id: sessionId, job_title: data.job_state && data.job_state.job_title, updated_at: new Date().toISOString() })
         );
       }
-      renderMessages(data.messages, data.suggested_options);
+      renderMessages(data.messages, data.suggested_options, data.options_multi_select);
       renderDraftForm(data);
       updateStatusBar(data);
     } catch (err) {
@@ -556,16 +670,31 @@
   });
 
   let companyProfileCache = null;
+  let closeTimer = null;
 
+  // Smooth open/close: add .open a frame after unhiding (so the initial state paints first and
+  // the transition actually runs), and on close, wait for the transition to finish before
+  // setting hidden — an iOS-sheet-like settle instead of an instant show/hide.
   function openModal() {
+    if (closeTimer) {
+      clearTimeout(closeTimer);
+      closeTimer = null;
+    }
     overlay.hidden = false;
     document.body.style.overflow = "hidden";
-    setTimeout(() => chatInput.focus(), 50);
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => overlay.classList.add("open"));
+    });
+    setTimeout(() => chatInput.focus(), 220);
   }
 
   function closeModal() {
-    overlay.hidden = true;
+    overlay.classList.remove("open");
     document.body.style.overflow = "";
+    closeTimer = setTimeout(() => {
+      overlay.hidden = true;
+      closeTimer = null;
+    }, 260);
     if (window.loadJobsFromModal) window.loadJobsFromModal();
   }
 
@@ -586,10 +715,9 @@
     currentPhase = null;
     pendingFile = null;
     currentData = null;
-    viewVersion = "1";
     renderAttachmentChip();
     clearError();
-    renderMessages([], []);
+    renderMessages([], [], false);
     draftEmpty.hidden = false;
     draftForm.hidden = true;
     statusEl.textContent = "drafting mode • auto-save";
@@ -602,7 +730,7 @@
       const data = await api.getChat(sessionId);
       currentData = data;
       currentPhase = data.phase;
-      renderMessages(data.messages, data.suggested_options);
+      renderMessages(data.messages, data.suggested_options, data.options_multi_select);
       renderDraftForm(data);
       updateStatusBar(data);
     } catch (err) {

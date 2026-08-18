@@ -636,19 +636,29 @@ body.neo .empty-state {
    .attachment-chip/.error-banner primitives from styles.css for the chat pane, so the chat
    itself looks and behaves exactly like the rest of the app's chat UI. */
 
+/* iOS-sheet-like open/close: overlay fades in, the modal itself scales up + rises slightly from
+   below rather than snapping to full size instantly. .open is added a frame after unhiding (see
+   job-modal.js) so this transition actually has something to animate from. */
 .job-modal-overlay {
   position: fixed;
   inset: 0;
   z-index: 300;
-  background: rgba(20, 20, 15, 0.55);
+  background: rgba(20, 20, 15, 0);
   display: flex;
   align-items: center;
   justify-content: center;
   padding: 20px;
+  opacity: 0;
+  transition: opacity 0.24s cubic-bezier(0.22, 1, 0.36, 1), background 0.24s cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 .job-modal-overlay[hidden] {
   display: none;
+}
+
+.job-modal-overlay.open {
+  opacity: 1;
+  background: rgba(20, 20, 15, 0.55);
 }
 
 .job-modal {
@@ -661,6 +671,12 @@ body.neo .empty-state {
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  transform: translateY(24px) scale(0.97);
+  transition: transform 0.28s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.job-modal-overlay.open .job-modal {
+  transform: translateY(0) scale(1);
 }
 
 .job-modal-header {
@@ -767,6 +783,52 @@ body.neo .empty-state {
 .jm-chip:disabled {
   opacity: 0.5;
   cursor: default;
+}
+
+/* Multi-select variant — stays available for repeated taps (picking Python + SQL + React)
+   instead of disabling after one tap like the single-select chips above. */
+.jm-chip-toggle.selected {
+  background: var(--neo-yellow, #ffd23f);
+  box-shadow: inset 0 0 0 2px var(--neo-black, #14140f);
+}
+
+.jm-chip-toggle.selected::before {
+  content: "✓ ";
+}
+
+.jm-chip-confirm {
+  padding: 7px 16px;
+  border-radius: var(--radius-pill);
+  border: 2px solid var(--neo-black, #14140f);
+  background: var(--neo-black, #14140f);
+  color: #fff;
+  font-family: var(--font-heading);
+  font-weight: 800;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+
+.jm-chip-confirm:disabled {
+  opacity: 0.4;
+  cursor: default;
+  background: var(--neo-surface, #fff);
+  color: var(--neo-black, #14140f);
+}
+
+/* ---------- Confetti (publish celebration) ---------- */
+
+.jm-confetti {
+  position: fixed;
+  inset: 0;
+  z-index: 400;
+  pointer-events: none;
+}
+
+.jm-confetti-piece {
+  position: absolute;
+  width: 9px;
+  height: 14px;
+  border-radius: 2px;
 }
 
 .job-modal-draft {

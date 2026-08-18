@@ -110,6 +110,11 @@ class TurnAnalysis(BaseModel):
     selected_version: Literal["1", "2"] | None = None
     asking_about_field: str | None = None
     suggested_options: list[str] = Field(default_factory=list)
+    # True when suggested_options are choices the recruiter can combine (e.g. picking several
+    # skills: Python + SQL + React), false when only one answer makes sense (e.g. work mode,
+    # experience band, yes/no). Governs whether the UI lets the recruiter tap multiple chips
+    # before sending, or sends immediately on the first tap.
+    options_multi_select: bool = False
     response: str
 
 
@@ -132,11 +137,6 @@ class JobDescriptionDraft(BaseModel):
     stand_out: list[str] = Field(default_factory=list)
     benefits: list[str] = Field(default_factory=list)
     why_company: str | None = None
-
-
-class JDGenerationOutput(BaseModel):
-    version_1: JobDescriptionDraft
-    version_2: JobDescriptionDraft
 
 
 class JDRefinementOutput(BaseModel):

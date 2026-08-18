@@ -22,3 +22,4 @@ class GraphState(TypedDict):
     jd_needs_refresh: bool  # transient: this turn's edit is what just made the JD stale
     asking_about_field: str | None  # optional JobState field the current AI question is about, if any
     suggested_options: list[str]  # quick-reply chip labels for the current AI question, if any
+    options_multi_select: bool  # whether the recruiter can tap several suggested_options before sending

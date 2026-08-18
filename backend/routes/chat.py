@@ -9,11 +9,17 @@ from langchain_core.messages import AIMessage, HumanMessage
 logger = logging.getLogger(__name__)
 
 from backend.agent.graph import get_compiled_graph
-from backend.agent.nodes import _job_state_from_record, route_after_apply
+from backend.agent.nodes import _job_state_from_record, apply_field_changes, publish_edit, publish_job, route_after_apply
 from backend.auth import get_current_recruiter
-from backend.database import create_chat_session, get_chat_session_owner, get_job_by_session_id
+from backend.database import (
+    create_chat_session,
+    get_chat_session_owner,
+    get_job_by_session_id,
+    save_refined_jd,
+    upsert_job_draft,
+)
 from backend.document_extract import DocumentExtractError, extract_text
-from backend.schemas import ChatMessage, ChatRequest, ChatResponse
+from backend.schemas import ChatMessage, ChatRequest, ChatResponse, JobStatePatch
 
 router = APIRouter(prefix="/api/chat", tags=["chat"])
 
@@ -95,7 +101,16 @@ def _to_response(session_id: str, state: dict) -> ChatResponse:
         job_record=job_record,
         asking_about_field=state.get("asking_about_field"),
         suggested_options=state.get("suggested_options") or [],
+        options_multi_select=bool(state.get("options_multi_select")),
     )
+
+
+def _authorize_session(session_id: str, user: dict) -> None:
+    owner = get_chat_session_owner(session_id)
+    if owner is None:
+        raise HTTPException(status_code=404, detail="No conversation found for this session_id")
+    if owner["company_id"] != user["company_id"]:
+        raise HTTPException(status_code=403, detail="You don't have access to this conversation.")
 
 
 def _sse(event_type: str, payload: dict) -> str:
@@ -202,11 +217,7 @@ async def post_chat_upload(
 
 @router.get("/{session_id}", response_model=ChatResponse)
 def get_chat(session_id: str, user: dict = Depends(get_current_recruiter)) -> ChatResponse:
-    owner = get_chat_session_owner(session_id)
-    if owner is None:
-        raise HTTPException(status_code=404, detail="No conversation found for this session_id")
-    if owner["company_id"] != user["company_id"]:
-        raise HTTPException(status_code=403, detail="You don't have access to this conversation.")
+    _authorize_session(session_id, user)
 
     graph = get_compiled_graph()
     config = {"configurable": {"thread_id": session_id}}
@@ -239,3 +250,101 @@ def get_chat(session_id: str, user: dict = Depends(get_current_recruiter)) -> Ch
         return _to_response(session_id, synthetic_state)
 
     raise HTTPException(status_code=404, detail="No conversation found for this session_id")
+
+
+@router.patch("/{session_id}/job-state", response_model=ChatResponse)
+def patch_job_state(session_id: str, body: JobStatePatch, user: dict = Depends(get_current_recruiter)) -> ChatResponse:
+    """Direct, silent edit to the draft — no chat message, no LLM call, no bot reply. This is
+    what the draft form's field edits (title, experience, salary, skills add/remove, company
+    context overrides, etc.) call, reusing apply_field_changes so the exact same validation and
+    list-operation semantics apply as when the bot makes an edit from a chat turn.
+    """
+    _authorize_session(session_id, user)
+
+    graph = get_compiled_graph()
+    config = {"configurable": {"thread_id": session_id, "company_id": user["company_id"], "user_id": user["id"]}}
+    state = graph.get_state(config).values
+    if not state:
+        raise HTTPException(status_code=404, detail="No conversation found for this session_id")
+
+    original_job_state = state.get("job_state") or {}
+    job_state = apply_field_changes(
+        original_job_state,
+        body.field_updates,
+        [op.model_dump() for op in body.list_operations],
+        body.company_overrides,
+    )
+    content_changed = job_state != original_job_state
+    jd_versions_exist = bool(state.get("jd_versions"))
+    jd_stale = (jd_versions_exist and content_changed) or state.get("jd_stale", False)
+
+    phase = state.get("phase", "collecting")
+    if phase == "published" and content_changed:
+        phase = "editing"
+
+    update = {"job_state": job_state, "jd_stale": jd_stale, "phase": phase}
+
+    # Hand-editing the current draft's own text (e.g. the summary) directly — same principle as
+    # job_state fields: no LLM refinement call needed for a literal edit. Only overwrites keys
+    # that already exist on the draft (defense-in-depth allowlist), and doesn't mark it stale —
+    # a direct text fix isn't "out of date with job_state" the way an unrelated field change is.
+    selected_version = state.get("selected_version")
+    jd_versions = state.get("jd_versions") or {}
+    if body.jd_text_updates and selected_version and jd_versions.get(selected_version):
+        jd = dict(jd_versions[selected_version])
+        changed = False
+        for key, value in body.jd_text_updates.items():
+            if key in jd:
+                jd[key] = value
+                changed = True
+        if changed:
+            new_jd_versions = dict(jd_versions)
+            new_jd_versions[selected_version] = jd
+            update["jd_versions"] = new_jd_versions
+            save_refined_jd(session_id, selected_version, jd)
+
+    graph.update_state(config, update)
+
+    is_published_job = state.get("job_id") is not None
+    if not is_published_job and job_state.get("job_title"):
+        # Mirrors apply_updates' write-through guard — drafts only, a published job's edits stay
+        # off the live row until the recruiter explicitly clicks Publish Edit.
+        upsert_job_draft(session_id, user["company_id"], job_state, jd_stale, owner_user_id=user["id"])
+
+    final_state = graph.get_state(config).values
+    return _to_response(session_id, final_state)
+
+
+@router.post("/{session_id}/publish", response_model=ChatResponse)
+def publish_session(session_id: str, user: dict = Depends(get_current_recruiter)) -> ChatResponse:
+    """The ONLY path that actually publishes a job or a published-job edit — a direct action the
+    "Publish Job"/"Publish Edit" button calls, never a side effect of a chat message (see the
+    CONFIRM_PUBLISH prompt guidance in prompts.py). Reuses the exact same publish_job/publish_edit
+    node functions the graph itself uses, just invoked directly instead of via routing, so the
+    publish logic itself (Job ID allocation, DB writes) isn't duplicated anywhere.
+    """
+    _authorize_session(session_id, user)
+
+    graph = get_compiled_graph()
+    config = {"configurable": {"thread_id": session_id, "company_id": user["company_id"], "user_id": user["id"]}}
+    state = graph.get_state(config).values
+    if not state:
+        raise HTTPException(status_code=404, detail="No conversation found for this session_id")
+
+    jd_versions = state.get("jd_versions") or {}
+    selected_version = state.get("selected_version")
+    if not (jd_versions and selected_version and jd_versions.get(selected_version)):
+        raise HTTPException(status_code=400, detail="Generate a job description before publishing.")
+    if state.get("jd_stale"):
+        raise HTTPException(status_code=400, detail="The job description is out of date — regenerate it before publishing.")
+
+    is_published_job = state.get("job_id") is not None
+    if is_published_job and state.get("phase") != "editing":
+        raise HTTPException(status_code=400, detail="This job is already published.")
+
+    node = publish_edit if is_published_job else publish_job
+    result = node(state, config)
+    graph.update_state(config, result)
+
+    final_state = graph.get_state(config).values
+    return _to_response(session_id, final_state)

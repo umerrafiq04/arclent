@@ -33,7 +33,7 @@ from backend.models import (
     OPTIONAL_SKIPPABLE_FIELDS,
     SCALAR_JOB_FIELDS,
     Intent,
-    JDGenerationOutput,
+    JobDescriptionDraft,
     JDRefinementOutput,
     TurnAnalysis,
 )
@@ -124,7 +124,6 @@ def analyze_turn(state: GraphState) -> dict:
         missing_essential=state.get("missing_essential", []),
         jd_exists=bool(state.get("jd_versions")),
         jd_stale=bool(state.get("jd_stale", False)),
-        selected_version=state.get("selected_version"),
     )
     messages = [SystemMessage(content=system_prompt), *state["messages"]]
 
@@ -182,15 +181,58 @@ def _apply_list_operation(current: list[str], operation: str, values: list[str])
 _BLOCK_ALL_VALUES = {i.value for i in INTENTS_BLOCK_ALL_JOBSTATE_CHANGES}
 _BLOCK_LIST_AND_OVERRIDE_VALUES = {i.value for i in INTENTS_BLOCK_LIST_AND_OVERRIDE_CHANGES}
 
+# Deterministic fallback chips for the standard checklist fields that have one obvious, safe
+# default set of answers — used only when the model asks about the field but returns no options
+# of its own (see the suggested_options backfill in apply_updates below).
+_DEFAULT_OPTIONS_BY_FIELD = {
+    "work_mode": ["Remote", "Hybrid", "Onsite"],
+    "employment_type": ["Full-time", "Part-time", "Contract", "Internship"],
+    "experience": ["0-1 years", "2-3 years", "4-6 years", "7+ years"],
+    "education": ["Bachelor's degree", "Master's degree", "Not required"],
+}
 
-def apply_updates(state: GraphState, config: RunnableConfig) -> dict:
-    analysis = state.get("pending_analysis") or {}
-    original_job_state = state.get("job_state") or {}
-    job_state = dict(original_job_state)
+
+def apply_field_changes(
+    job_state: dict,
+    field_updates: dict | None = None,
+    list_operations: list[dict] | None = None,
+    company_overrides: dict | None = None,
+) -> dict:
+    """Applies scalar/list/company-override changes to a COPY of job_state. Shared by the
+    LLM-driven apply_updates below and the direct (non-chat) job-state patch endpoint in
+    routes/chat.py, so both go through identical field validation and list-operation semantics
+    rather than two versions of the same logic drifting apart.
+    """
+    job_state = dict(job_state)
     job_state.setdefault("required_skills", [])
     job_state.setdefault("preferred_skills", [])
     job_state.setdefault("responsibilities", [])
     job_state.setdefault("company_overrides", {})
+
+    for key, value in (field_updates or {}).items():
+        if key in SCALAR_JOB_FIELDS:
+            job_state[key] = value
+
+    for op in list_operations or []:
+        field = op.get("field")
+        operation = op.get("operation")
+        values = op.get("values") or []
+        if field not in LIST_JOB_FIELDS:
+            continue
+        job_state[field] = _apply_list_operation(job_state.get(field, []), operation, values)
+
+    overrides = dict(job_state.get("company_overrides", {}))
+    for key, value in (company_overrides or {}).items():
+        if key in COMPANY_OVERRIDE_FIELDS:
+            overrides[key] = value
+    job_state["company_overrides"] = overrides
+
+    return job_state
+
+
+def apply_updates(state: GraphState, config: RunnableConfig) -> dict:
+    analysis = state.get("pending_analysis") or {}
+    original_job_state = state.get("job_state") or {}
 
     intent = analysis.get("intent")
 
@@ -199,25 +241,17 @@ def apply_updates(state: GraphState, config: RunnableConfig) -> dict:
     # scalar field_updates still apply — but the advice itself is always skill-shaped, so
     # list_operations/company_overrides are blocked until an explicit later confirmation.
     # Defense in depth: enforced here regardless of what the model actually returned.
-    if intent not in _BLOCK_ALL_VALUES:
-        for key, value in (analysis.get("field_updates") or {}).items():
-            if key in SCALAR_JOB_FIELDS:
-                job_state[key] = value
-
-        if intent not in _BLOCK_LIST_AND_OVERRIDE_VALUES:
-            for op in analysis.get("list_operations") or []:
-                field = op.get("field")
-                operation = op.get("operation")
-                values = op.get("values") or []
-                if field not in LIST_JOB_FIELDS:
-                    continue
-                job_state[field] = _apply_list_operation(job_state.get(field, []), operation, values)
-
-            overrides = dict(job_state.get("company_overrides", {}))
-            for key, value in (analysis.get("company_overrides") or {}).items():
-                if key in COMPANY_OVERRIDE_FIELDS:
-                    overrides[key] = value
-            job_state["company_overrides"] = overrides
+    if intent in _BLOCK_ALL_VALUES:
+        job_state = apply_field_changes(original_job_state)
+    elif intent in _BLOCK_LIST_AND_OVERRIDE_VALUES:
+        job_state = apply_field_changes(original_job_state, analysis.get("field_updates"))
+    else:
+        job_state = apply_field_changes(
+            original_job_state,
+            analysis.get("field_updates"),
+            analysis.get("list_operations"),
+            analysis.get("company_overrides"),
+        )
 
     llm_enough = bool(analysis.get("enough_information"))
     llm_missing = analysis.get("missing_essential") or []
@@ -297,8 +331,18 @@ def apply_updates(state: GraphState, config: RunnableConfig) -> dict:
     # Same defense-in-depth as asking_about_field above — only ever surface chips on a turn
     # that's actually posing a question, regardless of what the model returned.
     suggested_options = analysis.get("suggested_options") or []
+    options_multi_select = bool(analysis.get("options_multi_select"))
     if not reply_is_a_question:
         suggested_options = []
+    elif not suggested_options and asking_about_field in _DEFAULT_OPTIONS_BY_FIELD:
+        # The prompt asks the model for options on every question, but compliance isn't
+        # perfect — for the handful of checklist fields with an obvious, safe default set of
+        # answers, backfill deterministically rather than leaving the recruiter with nothing to
+        # tap. Fields without a sensible generic default (job_category, salary, location, free
+        # text) are intentionally left alone here. These fields are always single-choice by
+        # nature, so force multi-select off regardless of what the model returned.
+        suggested_options = _DEFAULT_OPTIONS_BY_FIELD[asking_about_field]
+        options_multi_select = False
 
     return {
         "job_state": job_state,
@@ -312,6 +356,7 @@ def apply_updates(state: GraphState, config: RunnableConfig) -> dict:
         "last_response": analysis.get("response", ""),
         "asking_about_field": asking_about_field,
         "suggested_options": suggested_options,
+        "options_multi_select": options_multi_select,
     }
 
 
@@ -324,6 +369,11 @@ def _jd_document_message(version: str, jd: dict) -> AIMessage:
 
 
 def generate_jd(state: GraphState, config: RunnableConfig) -> dict:
+    """Generates ONE complete job description draft — not a pair to choose between. Immediately
+    marks it selected (there's nothing to choose), so Publish becomes available right away;
+    "Regenerate" (same REQUEST_JD_GENERATION intent, called again) replaces this single draft
+    with a fresh one, it never creates a second one to pick between.
+    """
     company_profile = state.get("company_profile") or {}
     job_state = state.get("job_state") or {}
     session_id = config["configurable"]["thread_id"]
@@ -332,11 +382,11 @@ def generate_jd(state: GraphState, config: RunnableConfig) -> dict:
     prompt = build_jd_generation_prompt(company_profile, job_state)
     messages = [
         SystemMessage(content=prompt),
-        HumanMessage(content="Generate two job description drafts based on the information above."),
+        HumanMessage(content="Generate the job description based on the information above."),
     ]
 
     try:
-        output = call_structured(JDGenerationOutput, messages, retries=1)
+        output = call_structured(JobDescriptionDraft, messages, retries=1)
     except Exception:
         logger.exception("generate_jd: structured output failed after retry")
         response = (
@@ -345,16 +395,15 @@ def generate_jd(state: GraphState, config: RunnableConfig) -> dict:
         )
         return {"messages": [AIMessage(content=response)], "last_response": response}
 
-    jd_versions = {
-        "1": _strip_markdown(output.version_1.model_dump(mode="json")),
-        "2": _strip_markdown(output.version_2.model_dump(mode="json")),
-    }
+    jd = _strip_markdown(output.model_dump(mode="json"))
+    jd_versions = {"1": jd}
     save_jd_versions(session_id, jd_versions)
+    save_selected_version(session_id, "1")
 
     job_title = job_state.get("job_title") or "this role"
     response = (
-        f"Based on the information we've collected, I've prepared two versions for {job_title}. "
-        "Let me know which you'd prefer (\"I prefer 1\" or \"2\"), or how you'd like either one refined."
+        f"Here's the job description I've drafted for {job_title}. Let me know if you'd like any "
+        "changes, or click Regenerate for a fresh draft — otherwise it's ready to publish."
     )
     # Editing an already-published job stays in the "editing" phase throughout (that's what
     # gates publish_edit) rather than the fresh-draft "jd_selection" phase.
@@ -362,12 +411,11 @@ def generate_jd(state: GraphState, config: RunnableConfig) -> dict:
     return {
         "jd_versions": jd_versions,
         "jd_stale": False,
-        "selected_version": None,
+        "selected_version": "1",
         "phase": next_phase,
         "messages": [
             AIMessage(content=response),
-            _jd_document_message("1", jd_versions["1"]),
-            _jd_document_message("2", jd_versions["2"]),
+            _jd_document_message("1", jd),
         ],
         "last_response": response,
     }
@@ -483,7 +531,6 @@ def publish_edit(state: GraphState, config: RunnableConfig) -> dict:
 def route_after_apply(state: GraphState) -> str:
     intent = state.get("last_intent")
     jd_versions = state.get("jd_versions") or {}
-    is_published_job = state.get("job_id") is not None
 
     if intent == Intent.REQUEST_JD_GENERATION.value:
         job_state = state.get("job_state") or {}
@@ -508,16 +555,13 @@ def route_after_apply(state: GraphState) -> str:
     if intent == Intent.REQUEST_REFINEMENT.value and jd_versions and state.get("selected_version"):
         return "refine_jd"
 
-    if intent == Intent.CONFIRM_PUBLISH.value and jd_versions and state.get("selected_version") and not state.get("jd_stale", False):
-        if is_published_job and state.get("phase") == "editing":
-            return "publish_edit"
-        if not is_published_job and state.get("phase") != "published":
-            return "publish_job"
+    # Publishing is deliberately NEVER routed here, regardless of intent — it only ever happens
+    # via the direct POST /api/chat/{session_id}/publish endpoint the "Publish Job" button calls,
+    # never as a side effect of a chat turn (see the CONFIRM_PUBLISH prompt guidance: a chat
+    # confirmation gets acknowledged in the reply text, but the graph itself takes no action).
 
-    # An edit just made an existing JD stale — refresh it immediately rather than making the
-    # recruiter ask again in a follow-up turn (analyze_turn's reply already says this is
-    # happening now, so the behavior needs to match).
-    if state.get("jd_needs_refresh") and jd_versions:
-        return "generate_jd"
-
+    # Regeneration is deliberately NEVER auto-triggered by an edit that makes the JD stale
+    # either — it only happens via REQUEST_JD_GENERATION (the FINISH_COLLECTING branch above for
+    # the very first draft, or an explicit "regenerate" request/button click afterward). An edit
+    # just leaves jd_stale=true as a visible signal, nothing more.
     return END

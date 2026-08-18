@@ -108,6 +108,16 @@ const api = {
     return streamChatTurn(`${API_BASE}/chat/upload`, { method: "POST", body: formData }, onStatus);
   },
   getChat: (sessionId) => apiRequest(`/chat/${encodeURIComponent(sessionId)}`),
+  // Direct, silent job_state edit — no chat message, no bot reply. Used by the draft form's
+  // field edits (title, experience, skills add/remove, company-context overrides, etc.).
+  patchJobState: (sessionId, patch) =>
+    apiRequest(`/chat/${encodeURIComponent(sessionId)}/job-state`, {
+      method: "PATCH",
+      body: JSON.stringify(patch),
+    }),
+  // The ONLY call that actually publishes a job or a published-job edit — a direct action, never
+  // a side effect of a chat message.
+  publishJob: (sessionId) => apiRequest(`/chat/${encodeURIComponent(sessionId)}/publish`, { method: "POST" }),
 
   getCompanyProfile: () => apiRequest("/company-profile"),
   putCompanyProfile: (updates) =>
