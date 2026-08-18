@@ -166,7 +166,8 @@ def analyze_turn(state: GraphState) -> dict:
             # re-asked about.
             prospective_job_state = dict(state.get("job_state") or {})
             prospective_job_state.update(analysis.field_updates or {})
-            next_field = _next_checklist_prompt(prospective_job_state)
+            skipped = set(state.get("skipped_checklist_fields") or [])
+            next_field = _next_checklist_prompt(prospective_job_state, skipped)
             if next_field:
                 question, field, chips = next_field
                 analysis = analysis.model_copy(
@@ -266,13 +267,19 @@ _READY_TO_GENERATE_RESPONSE = (
 )
 
 
-def _next_checklist_prompt(job_state: dict) -> tuple[str, str, list[str]] | None:
-    """First unresolved field (in standard-checklist order) plus its canned question + chips, or
-    None once all four are set — used to deterministically pivot away from a capped-out
-    skills/responsibilities follow-up loop (see _SKILLS_FOLLOWUP_CAP) rather than leaving the
-    recruiter with an acknowledgment and no next question.
+def _next_checklist_prompt(job_state: dict, skipped: set[str] | None = None) -> tuple[str, str, list[str]] | None:
+    """First unresolved, not-yet-skipped field (in standard-checklist order) plus its canned
+    question + chips, or None once every field is either set or skipped — used to deterministically
+    pivot away from a capped-out skills/responsibilities follow-up loop (see _SKILLS_FOLLOWUP_CAP)
+    or an explicit "Skip this" click, rather than leaving the recruiter with an acknowledgment and
+    no next question. `skipped` matters: a skipped field's job_state value stays empty by design
+    (that's what skipping means), so without excluding it here this would just re-offer the exact
+    same question forever instead of moving on.
     """
+    skipped = skipped or set()
     for field in _CHECKLIST_ORDER:
+        if field in skipped:
+            continue
         if not job_state.get(field):
             return _CHECKLIST_QUESTIONS[field], field, _CHECKLIST_CHIPS[field]
     return None

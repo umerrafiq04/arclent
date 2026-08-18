@@ -25,3 +25,4 @@ class GraphState(TypedDict):
     suggested_options: list[str]  # quick-reply chip labels for the current AI question, if any
     options_multi_select: bool  # whether the recruiter can tap several suggested_options before sending
     skills_followup_count: int  # how many "add any other skills/responsibilities?" questions asked so far
+    skipped_checklist_fields: list[str]  # standard-checklist fields explicitly skipped — never re-asked

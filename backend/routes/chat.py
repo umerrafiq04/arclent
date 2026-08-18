@@ -377,7 +377,15 @@ def skip_field(session_id: str, user: dict = Depends(get_current_recruiter)) -> 
         raise HTTPException(status_code=404, detail="No conversation found for this session_id")
 
     job_state = state.get("job_state") or {}
-    next_field = _next_checklist_prompt(job_state)
+    # The field being skipped is whatever question is currently on screen — a skipped field's
+    # job_state value stays empty by design, so without remembering it here _next_checklist_prompt
+    # would just re-offer the exact same question forever instead of moving on.
+    skipped = set(state.get("skipped_checklist_fields") or [])
+    currently_asking = state.get("asking_about_field")
+    if currently_asking:
+        skipped.add(currently_asking)
+
+    next_field = _next_checklist_prompt(job_state, skipped)
     if next_field:
         question, field, chips = next_field
         response_text = f"No problem — skipping that. {question}"
@@ -393,6 +401,7 @@ def skip_field(session_id: str, user: dict = Depends(get_current_recruiter)) -> 
             "suggested_options": [],
             "options_multi_select": False,
         }
+    update["skipped_checklist_fields"] = list(skipped)
     update["messages"] = [AIMessage(content=response_text)]
     update["last_response"] = response_text
     graph.update_state(config, update)
