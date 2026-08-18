@@ -11,6 +11,8 @@ logger = logging.getLogger(__name__)
 from backend.agent.graph import get_compiled_graph
 from backend.agent.nodes import (
     _job_state_from_record,
+    _next_checklist_prompt,
+    _READY_TO_GENERATE_RESPONSE,
     apply_field_changes,
     generate_jd,
     publish_edit,
@@ -350,6 +352,50 @@ def generate_session(session_id: str, user: dict = Depends(get_current_recruiter
 
     result = generate_jd(state, config)
     graph.update_state(config, result)
+
+    final_state = graph.get_state(config).values
+    return _to_response(session_id, final_state)
+
+
+@router.post("/{session_id}/skip-field", response_model=ChatResponse)
+def skip_field(session_id: str, user: dict = Depends(get_current_recruiter)) -> ChatResponse:
+    """Direct, silent action the "Skip this" button calls. There's nothing for the recruiter to
+    have "said", so unlike every other chat action this adds NO user message to the transcript
+    at all — just a new bot message picking up the conversation. Skipping one of the four
+    standard-checklist fields never needs an LLM call either: the next question is chosen
+    deterministically via the exact same _next_checklist_prompt helper analyze_turn's
+    skills-loop-cap override uses, so this is instant and immune to Mistral rate limits — which
+    matters here specifically, since a 429 on a skip used to surface as a confusing "Sorry, I
+    didn't catch that" for an action that isn't really a message at all.
+    """
+    _authorize_session(session_id, user)
+
+    graph = get_compiled_graph()
+    config = {"configurable": {"thread_id": session_id, "company_id": user["company_id"], "user_id": user["id"]}}
+    state = graph.get_state(config).values
+    if not state:
+        raise HTTPException(status_code=404, detail="No conversation found for this session_id")
+
+    job_state = state.get("job_state") or {}
+    next_field = _next_checklist_prompt(job_state)
+    if next_field:
+        question, field, chips = next_field
+        response_text = f"No problem — skipping that. {question}"
+        update = {
+            "asking_about_field": field,
+            "suggested_options": chips,
+            "options_multi_select": False,
+        }
+    else:
+        response_text = _READY_TO_GENERATE_RESPONSE
+        update = {
+            "asking_about_field": None,
+            "suggested_options": [],
+            "options_multi_select": False,
+        }
+    update["messages"] = [AIMessage(content=response_text)]
+    update["last_response"] = response_text
+    graph.update_state(config, update)
 
     final_state = graph.get_state(config).values
     return _to_response(session_id, final_state)

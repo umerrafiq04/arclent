@@ -430,6 +430,21 @@ def apply_updates(state: GraphState, config: RunnableConfig) -> dict:
     ):
         asking_about_field = None
 
+    # The model sometimes asks a standard checklist question in a recognizable way (e.g. "How
+    # many years of experience...?") without correctly setting asking_about_field — meaning the
+    # Skip button silently wouldn't show even on a turn that's obviously skippable. Sniff the
+    # response text the same way the chip fallback below does, independent of whether the model
+    # already supplied its own suggested_options, so Skip-button coverage never lags chip
+    # coverage.
+    if not asking_about_field and reply_is_a_question:
+        response_lower = analysis.get("response", "").lower()
+        for candidate_field, phrases in _KEYWORD_FIELD_HINTS:
+            if candidate_field in missing:
+                continue
+            if any(phrase in response_lower for phrase in phrases):
+                asking_about_field = candidate_field
+                break
+
     # Same defense-in-depth as asking_about_field above — only ever surface chips on a turn
     # that's actually posing a question, regardless of what the model returned.
     suggested_options = analysis.get("suggested_options") or []
@@ -447,21 +462,11 @@ def apply_updates(state: GraphState, config: RunnableConfig) -> dict:
     elif not suggested_options:
         # The prompt asks the model for options on EVERY question, but compliance isn't
         # perfect — sometimes it spells options out in prose instead ("...4-6 years, or 7+
-        # years?") without also populating suggested_options, or asks a standard question
-        # without setting asking_about_field correctly. Guarantee something tappable always
-        # appears rather than depending on prompt compliance alone: try the field-specific
-        # default first (by asking_about_field, then by sniffing the response text for the
-        # same standard questions), and fall back to a generic pair as an absolute last resort.
-        field_guess = asking_about_field if asking_about_field in _DEFAULT_OPTIONS_BY_FIELD else None
-        if not field_guess:
-            response_lower = analysis.get("response", "").lower()
-            for candidate_field, phrases in _KEYWORD_FIELD_HINTS:
-                if any(phrase in response_lower for phrase in phrases):
-                    field_guess = candidate_field
-                    break
-        # These fields are always single-choice by nature, so force multi-select off regardless
-        # of what the model returned when a fallback fires.
-        suggested_options = _DEFAULT_OPTIONS_BY_FIELD.get(field_guess, _GENERIC_FALLBACK_OPTIONS)
+        # years?") without also populating suggested_options. Guarantee something tappable
+        # always appears rather than depending on prompt compliance alone — reuse whatever
+        # asking_about_field resolved to above (model-supplied or text-sniffed), and fall back
+        # to a generic pair as an absolute last resort.
+        suggested_options = _DEFAULT_OPTIONS_BY_FIELD.get(asking_about_field, _GENERIC_FALLBACK_OPTIONS)
         options_multi_select = False
 
     return {

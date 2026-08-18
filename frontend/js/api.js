@@ -121,6 +121,9 @@ const api = {
   // The ONLY call that actually publishes a job or a published-job edit — a direct action, never
   // a side effect of a chat message.
   publishJob: (sessionId) => apiRequest(`/chat/${encodeURIComponent(sessionId)}/publish`, { method: "POST" }),
+  // Direct, silent skip of the current optional-field question — no fake user message, no
+  // Mistral call for the common case. Used by the "Skip this" button.
+  skipField: (sessionId) => apiRequest(`/chat/${encodeURIComponent(sessionId)}/skip-field`, { method: "POST" }),
 
   getCompanyProfile: () => apiRequest("/company-profile"),
   putCompanyProfile: (updates) =>

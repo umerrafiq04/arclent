@@ -119,13 +119,29 @@
     skipBtn.type = "button";
     skipBtn.className = "jm-skip-btn";
     skipBtn.textContent = "Skip this";
-    skipBtn.addEventListener("click", () => {
-      skipBtn.disabled = true;
-      sendMessage("I don't have that information for this role — let's skip it.");
-    });
+    skipBtn.addEventListener("click", () => skipCurrentField(skipBtn));
     row.appendChild(skipBtn);
     afterRow.insertAdjacentElement("afterend", row);
     messageList.scrollTop = messageList.scrollHeight;
+  }
+
+  // Skipping ONLY ever happens here — a direct API call, never a chat message. There's nothing
+  // for the recruiter to have "said", so unlike sendMessage this adds no user bubble to the
+  // transcript at all — just the bot's next question appearing.
+  async function skipCurrentField(button) {
+    clearError();
+    button.disabled = true;
+    try {
+      const data = await api.skipField(sessionId);
+      currentData = data;
+      currentPhase = data.phase;
+      renderMessages(data.messages, data.suggested_options, data.options_multi_select, data.asking_about_field);
+      renderDraftForm(data);
+      updateStatusBar(data);
+    } catch (err) {
+      showError(err.message || "Couldn't skip this. Please try again.");
+      button.disabled = false;
+    }
   }
 
   function showProcessingStatus(label) {
@@ -366,12 +382,24 @@
       badge.textContent = "AI GENERATED";
       header.appendChild(badge);
     }
+    // Job Requisition ID is assigned at publish time — shows here (read-only, matches exactly
+    // what the public job page and "Job Requisition ID" field display) once it exists, so
+    // there's no gap between what the recruiter previews and what's actually live.
+    if (data.job_record && data.job_record.job_id) {
+      const reqIdBadge = document.createElement("span");
+      reqIdBadge.className = "neo-pill";
+      reqIdBadge.textContent = `Req ID: ${data.job_record.job_id}`;
+      header.appendChild(reqIdBadge);
+    }
     draftForm.appendChild(header);
 
     const jd = (jdVersions && jdVersions["1"]) || {};
 
     draftForm.appendChild(
       fieldRow("Job Title", jobState.job_title, (v) => patchField({ field_updates: { job_title: v } }))
+    );
+    draftForm.appendChild(
+      fieldRow("Job Category", jobState.job_category, (v) => patchField({ field_updates: { job_category: v } }))
     );
 
     if (hasJd) {
