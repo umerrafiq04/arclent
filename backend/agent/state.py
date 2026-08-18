@@ -9,6 +9,7 @@ Phase = Literal["collecting", "summary", "jd_selection", "publish_confirm", "pub
 class GraphState(TypedDict):
     messages: Annotated[list[BaseMessage], add_messages]
     company_profile: dict
+    recruiter_name: str | None  # first name of the signed-in recruiter, for natural personalization
     job_state: dict
     phase: Phase
     job_id: str | None  # set once this thread corresponds to an already-published job

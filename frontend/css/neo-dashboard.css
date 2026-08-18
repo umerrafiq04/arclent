@@ -823,6 +823,36 @@ body.neo .empty-state {
   color: var(--neo-black, #14140f);
 }
 
+/* Deliberately understated next to the real-answer chips above — a way out of a question the
+   recruiter can't or doesn't want to answer, not another option among the actual choices. */
+.jm-skip-row {
+  display: flex;
+  margin-left: 34px;
+  margin-top: 6px;
+}
+
+.jm-skip-btn {
+  padding: 5px 14px;
+  border-radius: var(--radius-pill);
+  border: 2px dashed var(--neo-muted, #6b6858);
+  background: transparent;
+  color: var(--neo-muted, #6b6858);
+  font-family: var(--font-heading);
+  font-weight: 700;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.jm-skip-btn:hover:not(:disabled) {
+  border-color: var(--neo-black, #14140f);
+  color: var(--neo-black, #14140f);
+}
+
+.jm-skip-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
 /* ---------- Confetti (publish celebration) ---------- */
 
 .jm-confetti {

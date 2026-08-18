@@ -20,6 +20,7 @@ from backend.database import (
     finalize_publish,
     get_company_profile_by_id,
     get_job_by_session_id,
+    get_user_by_id,
     save_jd_versions,
     save_refined_jd,
     save_selected_version,
@@ -95,6 +96,12 @@ def load_context(state: GraphState, config: RunnableConfig) -> dict:
         company_id = config["configurable"].get("company_id")
         updates["company_profile"] = get_company_profile_by_id(company_id) or {} if company_id else {}
 
+    if not state.get("recruiter_name"):
+        user_id = config["configurable"].get("user_id")
+        user = get_user_by_id(user_id) if user_id else None
+        if user and user.get("name"):
+            updates["recruiter_name"] = user["name"].strip().split(" ")[0]
+
     if state.get("job_id") is None:
         session_id = config["configurable"]["thread_id"]
         record = get_job_by_session_id(session_id)
@@ -124,11 +131,12 @@ def analyze_turn(state: GraphState) -> dict:
         missing_essential=state.get("missing_essential", []),
         jd_exists=bool(state.get("jd_versions")),
         jd_stale=bool(state.get("jd_stale", False)),
+        recruiter_name=state.get("recruiter_name"),
     )
     messages = [SystemMessage(content=system_prompt), *state["messages"]]
 
     try:
-        analysis = call_structured(TurnAnalysis, messages, retries=1)
+        analysis = call_structured(TurnAnalysis, messages, retries=2)
     except RuntimeError:
         # Configuration error (e.g. missing MISTRAL_API_KEY) — not a parsing failure,
         # let it propagate so the API layer can return a clear 503 instead of a
@@ -350,6 +358,14 @@ def apply_updates(state: GraphState, config: RunnableConfig) -> dict:
     options_multi_select = bool(analysis.get("options_multi_select"))
     if not reply_is_a_question:
         suggested_options = []
+    elif asking_about_field in _DEFAULT_OPTIONS_BY_FIELD:
+        # These four fields have exactly one fixed, canonical single-choice answer set — always
+        # use it instead of trusting the model's own suggested_options, which occasionally drift
+        # (e.g. still offering leftover skill-style chips for an experience-band question). No
+        # ambiguity here, so there's no reason to prefer a model-supplied value over the known-good
+        # default the way the prose-sniffing fallback below has to for open-ended fields.
+        suggested_options = _DEFAULT_OPTIONS_BY_FIELD[asking_about_field]
+        options_multi_select = False
     elif not suggested_options:
         # The prompt asks the model for options on EVERY question, but compliance isn't
         # perfect — sometimes it spells options out in prose instead ("...4-6 years, or 7+
@@ -412,7 +428,7 @@ def generate_jd(state: GraphState, config: RunnableConfig) -> dict:
     ]
 
     try:
-        output = call_structured(JobDescriptionDraft, messages, retries=1)
+        output = call_structured(JobDescriptionDraft, messages, retries=2)
     except Exception:
         logger.exception("generate_jd: structured output failed after retry")
         response = (
@@ -463,7 +479,7 @@ def refine_jd(state: GraphState, config: RunnableConfig) -> dict:
     messages = [SystemMessage(content=prompt), HumanMessage(content=instruction)]
 
     try:
-        output = call_structured(JDRefinementOutput, messages, retries=1)
+        output = call_structured(JDRefinementOutput, messages, retries=2)
     except Exception:
         logger.exception("refine_jd: structured output failed after retry")
         response = "I had trouble applying that change — could you rephrase what you'd like adjusted?"

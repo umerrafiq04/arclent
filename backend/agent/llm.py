@@ -1,4 +1,5 @@
 import logging
+import time
 from typing import TypeVar
 
 from langchain_core.messages import BaseMessage
@@ -25,8 +26,18 @@ def get_llm() -> ChatMistralAI:
     return _llm
 
 
+def _is_rate_limited(exc: Exception) -> bool:
+    return "429" in str(exc) or "rate_limited" in str(exc).lower()
+
+
 def call_structured(schema: type[T], messages: list[BaseMessage], retries: int = 1) -> T:
-    """Invoke the LLM with structured output, retrying once on a validation failure.
+    """Invoke the LLM with structured output, retrying on failure.
+
+    A 429 gets a short backoff before the next attempt. Mistral's per-second rate-limit window
+    clears fast, but retrying instantly (the old behavior) was guaranteed to fail again on a
+    sustained burst and surface a confusing "didn't catch that" fallback to the recruiter for
+    what was really just a transient spike — a couple seconds of backoff turns a real user's
+    occasional 429 into a slightly slower reply instead of a dropped message.
 
     Callers are responsible for handling the case where every attempt fails
     (they should keep existing state untouched and ask the recruiter to rephrase).
@@ -42,5 +53,7 @@ def call_structured(schema: type[T], messages: list[BaseMessage], retries: int =
         except Exception as exc:  # noqa: BLE001 - structured-output failures are heterogeneous
             last_error = exc
             logger.warning("Structured output attempt %s failed: %s", attempt + 1, exc)
+            if attempt < retries and _is_rate_limited(exc):
+                time.sleep(2.5 * (attempt + 1))
     assert last_error is not None
     raise last_error

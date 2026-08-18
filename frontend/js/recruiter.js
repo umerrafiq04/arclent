@@ -333,6 +333,8 @@ async function init() {
     recruiterNameEl.textContent = me.name;
     recruiterAvatarEl.textContent = me.name.trim().charAt(0).toUpperCase() || "?";
     recruiterMetaEl.textContent = me.company_name || "Arclent Member";
+    // Exposed so the job modal's opening greeting can address the recruiter by name.
+    window.recruiterFirstName = me.name.trim().split(/\s+/)[0];
   }
 
   const loading = document.createElement("div");

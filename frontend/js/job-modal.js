@@ -105,6 +105,27 @@
 
     afterRow.insertAdjacentElement("afterend", row);
     messageList.scrollTop = messageList.scrollHeight;
+    return row;
+  }
+
+  // The backend only ever sets asking_about_field when its latest reply is a live question
+  // about one specific OPTIONAL field (see apply_updates in nodes.py) — never fabricated
+  // client-side. Recruiters who don't have that piece of info (or just don't want to answer)
+  // need a way out of the question besides typing free text or hunting for the right chip.
+  function appendSkipButton(afterRow, field) {
+    const row = document.createElement("div");
+    row.className = "jm-skip-row";
+    const skipBtn = document.createElement("button");
+    skipBtn.type = "button";
+    skipBtn.className = "jm-skip-btn";
+    skipBtn.textContent = "Skip this";
+    skipBtn.addEventListener("click", () => {
+      skipBtn.disabled = true;
+      sendMessage("I don't have that information for this role — let's skip it.");
+    });
+    row.appendChild(skipBtn);
+    afterRow.insertAdjacentElement("afterend", row);
+    messageList.scrollTop = messageList.scrollHeight;
   }
 
   function showProcessingStatus(label) {
@@ -146,16 +167,38 @@
     clearChildren(errorSlot);
   }
 
-  const DEFAULT_ROLE_CHIPS = ["Software Engineer", "Data Analyst", "Product Manager", "Sales Executive"];
+  // A wide pool spanning different departments — four are picked at random each time a fresh
+  // job modal opens (see pickRoleChips below) so the opening suggestions don't feel like the
+  // same static four options every single time.
+  const ROLE_CHIP_POOL = [
+    "Software Engineer", "Data Analyst", "Product Manager", "Sales Executive",
+    "Marketing Manager", "UX Designer", "Customer Support Specialist", "Operations Manager",
+    "HR Business Partner", "Financial Analyst", "DevOps Engineer", "Content Writer",
+    "Business Development Manager", "QA Engineer", "Recruiter", "Account Executive",
+  ];
 
-  function renderMessages(messages, suggestedOptions, multiSelect) {
+  function pickRoleChips(count) {
+    const pool = ROLE_CHIP_POOL.slice();
+    for (let i = pool.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [pool[i], pool[j]] = [pool[j], pool[i]];
+    }
+    return pool.slice(0, count);
+  }
+
+  function renderMessages(messages, suggestedOptions, multiSelect, askingAboutField) {
     clearChildren(messageList);
     if (!messages || messages.length === 0) {
-      // Greeting is static (no analyze_turn call has happened yet), but it's still a real
+      // Greeting is static text (no analyze_turn call has happened yet), but it's still a real
       // question — it gets the same chip treatment as every other AI question, not just plain
       // centered text with nothing tappable under it. Always single-select (one role to start).
-      const row = appendMessage("ai", "What are you hiring for today? 👋");
-      appendChips(row, DEFAULT_ROLE_CHIPS, false);
+      // window.recruiterFirstName is set by recruiter.js once /auth/me resolves — falls back to
+      // the generic greeting on the rare chance the modal opens before that request lands.
+      const greeting = window.recruiterFirstName
+        ? `Hi ${window.recruiterFirstName}, what are you hiring for today? 👋`
+        : "What are you hiring for today? 👋";
+      const row = appendMessage("ai", greeting);
+      appendChips(row, pickRoleChips(4), false);
       return;
     }
     let lastAiRow = null;
@@ -164,8 +207,13 @@
       const row = appendMessage(m.role, m.content);
       if (m.role !== "user") lastAiRow = row;
     });
-    if (lastAiRow && suggestedOptions && suggestedOptions.length) {
-      appendChips(lastAiRow, suggestedOptions, multiSelect);
+    if (!lastAiRow) return;
+    let insertAfter = lastAiRow;
+    if (suggestedOptions && suggestedOptions.length) {
+      insertAfter = appendChips(lastAiRow, suggestedOptions, multiSelect) || lastAiRow;
+    }
+    if (askingAboutField) {
+      appendSkipButton(insertAfter, askingAboutField);
     }
   }
 
@@ -380,6 +428,18 @@
     );
     draftForm.appendChild(grid3);
 
+    const grid4 = document.createElement("div");
+    grid4.className = "jm-field-grid";
+    grid4.appendChild(
+      fieldRow(
+        "Education",
+        jobState.education,
+        (v) => patchField({ field_updates: { education: v } }),
+        { select: ["Bachelor's degree", "Master's degree", "Not required"] }
+      )
+    );
+    draftForm.appendChild(grid4);
+
     draftForm.appendChild(
       listEditor(
         "Responsibilities",
@@ -417,6 +477,8 @@
       body.className = "jm-expandable-body";
       [
         ["About the Role", jd.about_role],
+        ["Company Overview", jd.company_overview],
+        ["Why Join", jd.why_company],
         ["Major Accountabilities", jd.major_accountabilities],
         ["Minimum Requirements", jd.minimum_requirements],
         ["Required Qualifications", jd.required_qualifications],
@@ -520,7 +582,7 @@
       hideProcessingStatus();
       currentData = data;
       currentPhase = data.phase;
-      renderMessages(data.messages, data.suggested_options, data.options_multi_select);
+      renderMessages(data.messages, data.suggested_options, data.options_multi_select, data.asking_about_field);
       renderDraftForm(data);
       updateStatusBar(data);
     } catch (err) {
@@ -548,7 +610,7 @@
       currentData = data;
       currentPhase = data.phase;
       localStorage.removeItem(STORAGE_KEY);
-      renderMessages(data.messages, data.suggested_options, data.options_multi_select);
+      renderMessages(data.messages, data.suggested_options, data.options_multi_select, data.asking_about_field);
       renderDraftForm(data);
       updateStatusBar(data);
       celebrate();
@@ -664,7 +726,7 @@
           JSON.stringify({ session_id: sessionId, job_title: data.job_state && data.job_state.job_title, updated_at: new Date().toISOString() })
         );
       }
-      renderMessages(data.messages, data.suggested_options, data.options_multi_select);
+      renderMessages(data.messages, data.suggested_options, data.options_multi_select, data.asking_about_field);
       renderDraftForm(data);
       updateStatusBar(data);
     } catch (err) {
@@ -755,7 +817,7 @@
       const data = await api.getChat(sessionId);
       currentData = data;
       currentPhase = data.phase;
-      renderMessages(data.messages, data.suggested_options, data.options_multi_select);
+      renderMessages(data.messages, data.suggested_options, data.options_multi_select, data.asking_about_field);
       renderDraftForm(data);
       updateStatusBar(data);
     } catch (err) {

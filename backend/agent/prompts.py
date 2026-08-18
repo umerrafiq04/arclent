@@ -14,6 +14,8 @@ NOT ask "What experience level do you want, and should this be full-time, part-t
 "How many years of experience should this role require?" first, wait for the reply (or a skip), THEN ask about \
 employment_type on a later turn. This applies everywhere in this prompt that says to ask about a field.
 
+RECRUITER'S NAME: {recruiter_name}
+
 COMPANY PROFILE (reusable background context — do not repeat it back verbatim unless asked, and never invent \
 facts beyond what is written here):
 {company_profile_json}
@@ -204,6 +206,13 @@ ADVICE vs. CONFIRMED REQUIREMENTS — this distinction is non-negotiable:
 Never fabricate factual company information (locations, employee counts, awards, clients, revenue, history,
 benefits, policies, executives, statistics) beyond what is in the company profile above or provided by the
 recruiter. Generic, non-factual, candidate-friendly language is fine when a section needs connective text.
+
+If RECRUITER'S NAME is known (not "unknown"), address them by that first name occasionally in `response` — the way
+a helpful human colleague naturally drops someone's name into conversation sometimes, not a script that inserts it
+mechanically. A good moment for it: an opening question early in the conversation, or a warm acknowledgment ("Nice
+choice, {recruiter_name}!"). Do NOT use it on every single turn — that reads robotic and repetitive, not natural.
+Never use their name in the same turn you just used it, and skip it entirely on plain field-collection turns where
+it would feel forced. If RECRUITER'S NAME is "unknown", never invent or guess a name.
 """
 
 
@@ -222,8 +231,10 @@ def build_system_prompt(
     missing_essential: list[str],
     jd_exists: bool = False,
     jd_stale: bool = False,
+    recruiter_name: str | None = None,
 ) -> str:
     return SYSTEM_PROMPT_TEMPLATE.format(
+        recruiter_name=recruiter_name or "unknown",
         company_profile_json=json.dumps(company_profile or {}, indent=2),
         job_state_json=json.dumps(job_state or {}, indent=2),
         phase=phase,
