@@ -9,7 +9,15 @@ from langchain_core.messages import AIMessage, HumanMessage
 logger = logging.getLogger(__name__)
 
 from backend.agent.graph import get_compiled_graph
-from backend.agent.nodes import _job_state_from_record, apply_field_changes, publish_edit, publish_job, route_after_apply
+from backend.agent.nodes import (
+    _job_state_from_record,
+    apply_field_changes,
+    generate_jd,
+    publish_edit,
+    publish_job,
+    route_after_apply,
+)
+from backend.agent.sufficiency import hard_floor_met
 from backend.auth import get_current_recruiter
 from backend.database import (
     create_chat_session,
@@ -310,6 +318,38 @@ def patch_job_state(session_id: str, body: JobStatePatch, user: dict = Depends(g
         # Mirrors apply_updates' write-through guard — drafts only, a published job's edits stay
         # off the live row until the recruiter explicitly clicks Publish Edit.
         upsert_job_draft(session_id, user["company_id"], job_state, jd_stale, owner_user_id=user["id"])
+
+    final_state = graph.get_state(config).values
+    return _to_response(session_id, final_state)
+
+
+@router.post("/{session_id}/generate", response_model=ChatResponse)
+def generate_session(session_id: str, user: dict = Depends(get_current_recruiter)) -> ChatResponse:
+    """The ONLY path that actually calls the model to WRITE the job description — a direct
+    action the "Generate Full Description"/"Regenerate" button calls, never a side effect of a
+    chat message (see the REQUEST_JD_GENERATION/FINISH_COLLECTING prompt guidance: the bot's job
+    in chat is collecting details and saying when it's ready, never generating itself). Reuses
+    the exact generate_jd node function the graph itself uses, just invoked directly — no fake
+    "Please generate..." user message is added to the transcript, this doesn't go through
+    analyze_turn at all.
+    """
+    _authorize_session(session_id, user)
+
+    graph = get_compiled_graph()
+    config = {"configurable": {"thread_id": session_id, "company_id": user["company_id"], "user_id": user["id"]}}
+    state = graph.get_state(config).values
+    if not state:
+        raise HTTPException(status_code=404, detail="No conversation found for this session_id")
+
+    job_state = state.get("job_state") or {}
+    if not hard_floor_met(job_state):
+        raise HTTPException(
+            status_code=400,
+            detail="Add at least a job title and one required skill or responsibility before generating.",
+        )
+
+    result = generate_jd(state, config)
+    graph.update_state(config, result)
 
     final_state = graph.get_state(config).values
     return _to_response(session_id, final_state)

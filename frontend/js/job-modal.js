@@ -474,13 +474,7 @@
     generateBtn.type = "button";
     generateBtn.className = "neo-btn";
     generateBtn.textContent = hasJd ? "⟳ Regenerate" : "✦ Generate Full Description";
-    generateBtn.addEventListener("click", () => {
-      sendMessage(
-        hasJd
-          ? "Please regenerate the job description from scratch."
-          : "Please generate the job description now using all the details provided."
-      );
-    });
+    generateBtn.addEventListener("click", () => generateNow(generateBtn, hasJd));
     actions.appendChild(generateBtn);
 
     const saveDraftBtn = document.createElement("button");
@@ -511,9 +505,39 @@
     }
   }
 
+  // Generation ONLY ever happens here — a direct API call the button makes, never a side effect
+  // of a chat message (see the backend's REQUEST_JD_GENERATION guidance: chat can acknowledge
+  // and point here, but never generates itself). No fake "please generate" user bubble is added
+  // — just a processing indicator while the call is in flight, then the result.
+  async function generateNow(button, isRegenerate) {
+    clearError();
+    button.disabled = true;
+    const originalText = button.textContent;
+    button.textContent = isRegenerate ? "Regenerating…" : "Generating…";
+    showProcessingStatus(isRegenerate ? "Regenerating your job description..." : "Creating your job description...");
+    try {
+      const data = await api.generateJd(sessionId);
+      hideProcessingStatus();
+      currentData = data;
+      currentPhase = data.phase;
+      renderMessages(data.messages, data.suggested_options, data.options_multi_select);
+      renderDraftForm(data);
+      updateStatusBar(data);
+    } catch (err) {
+      hideProcessingStatus();
+      showError(err.message || "Couldn't generate the job description. Please try again.");
+      button.disabled = false;
+      button.textContent = originalText;
+    }
+  }
+
   // Publishing ONLY ever happens here — a direct API call the button makes, never a side effect
   // of a chat message (see the backend's CONFIRM_PUBLISH guidance: chat can acknowledge, but
-  // only this endpoint actually flips the job live).
+  // only this endpoint actually flips the job live). The modal closes itself right after a
+  // successful publish — leaving it open invited the recruiter to keep chatting against an
+  // already-published job, which the bot could misread as a request to touch it again right
+  // away ("now" -> "Generating the updated job description..."). Further changes belong to a
+  // deliberate later "Manage -> Edit" reopen, not this same open window.
   async function publishNow(button) {
     clearError();
     button.disabled = true;
@@ -532,6 +556,7 @@
         window.showToast(`Job ${data.job_record ? data.job_record.job_id : ""} published successfully.`, "success");
       }
       window.dispatchEvent(new CustomEvent("jobmodal:published"));
+      setTimeout(closeModal, 1400);
     } catch (err) {
       showError(err.message || "Couldn't publish this job. Please try again.");
       button.disabled = false;
@@ -685,7 +710,7 @@
     requestAnimationFrame(() => {
       requestAnimationFrame(() => overlay.classList.add("open"));
     });
-    setTimeout(() => chatInput.focus(), 220);
+    setTimeout(() => chatInput.focus(), 340);
   }
 
   function closeModal() {
@@ -694,7 +719,7 @@
     closeTimer = setTimeout(() => {
       overlay.hidden = true;
       closeTimer = null;
-    }, 260);
+    }, 360);
     if (window.loadJobsFromModal) window.loadJobsFromModal();
   }
 

@@ -191,6 +191,22 @@ _DEFAULT_OPTIONS_BY_FIELD = {
     "education": ["Bachelor's degree", "Master's degree", "Not required"],
 }
 
+# Last-resort keyword sniffing on the response TEXT — the model sometimes spells options out in
+# prose ("...4-6 years, or 7+ years?") without ALSO populating suggested_options, or asks a
+# standard-checklist question without correctly setting asking_about_field this turn. Catches
+# those cases so the field-specific defaults above still apply even when asking_about_field
+# didn't line up.
+_KEYWORD_FIELD_HINTS = (
+    ("experience", ("years of experience", "how many years", "experience level")),
+    ("work_mode", ("remote, hybrid", "hybrid, or onsite", "hybrid or onsite", "remote or onsite", "onsite, hybrid")),
+    ("employment_type", ("full-time, part-time", "full-time, or part-time", "part-time, contract")),
+)
+
+# Absolute last resort when a question produced zero options and no field could even be guessed
+# (e.g. an open "anything else?" / "ready to move on?" check) — every question gets SOMETHING
+# tappable, never a bare prompt with nothing to click.
+_GENERIC_FALLBACK_OPTIONS = ["That's all", "Let me add more"]
+
 
 def apply_field_changes(
     job_state: dict,
@@ -334,14 +350,24 @@ def apply_updates(state: GraphState, config: RunnableConfig) -> dict:
     options_multi_select = bool(analysis.get("options_multi_select"))
     if not reply_is_a_question:
         suggested_options = []
-    elif not suggested_options and asking_about_field in _DEFAULT_OPTIONS_BY_FIELD:
-        # The prompt asks the model for options on every question, but compliance isn't
-        # perfect — for the handful of checklist fields with an obvious, safe default set of
-        # answers, backfill deterministically rather than leaving the recruiter with nothing to
-        # tap. Fields without a sensible generic default (job_category, salary, location, free
-        # text) are intentionally left alone here. These fields are always single-choice by
-        # nature, so force multi-select off regardless of what the model returned.
-        suggested_options = _DEFAULT_OPTIONS_BY_FIELD[asking_about_field]
+    elif not suggested_options:
+        # The prompt asks the model for options on EVERY question, but compliance isn't
+        # perfect — sometimes it spells options out in prose instead ("...4-6 years, or 7+
+        # years?") without also populating suggested_options, or asks a standard question
+        # without setting asking_about_field correctly. Guarantee something tappable always
+        # appears rather than depending on prompt compliance alone: try the field-specific
+        # default first (by asking_about_field, then by sniffing the response text for the
+        # same standard questions), and fall back to a generic pair as an absolute last resort.
+        field_guess = asking_about_field if asking_about_field in _DEFAULT_OPTIONS_BY_FIELD else None
+        if not field_guess:
+            response_lower = analysis.get("response", "").lower()
+            for candidate_field, phrases in _KEYWORD_FIELD_HINTS:
+                if any(phrase in response_lower for phrase in phrases):
+                    field_guess = candidate_field
+                    break
+        # These fields are always single-choice by nature, so force multi-select off regardless
+        # of what the model returned when a fallback fires.
+        suggested_options = _DEFAULT_OPTIONS_BY_FIELD.get(field_guess, _GENERIC_FALLBACK_OPTIONS)
         options_multi_select = False
 
     return {
@@ -532,36 +558,24 @@ def route_after_apply(state: GraphState) -> str:
     intent = state.get("last_intent")
     jd_versions = state.get("jd_versions") or {}
 
-    if intent == Intent.REQUEST_JD_GENERATION.value:
-        job_state = state.get("job_state") or {}
-        if hard_floor_met(job_state) and not (state.get("missing_essential") or []):
-            return "generate_jd"
-        return END
-
-    # The recruiter just gave a finish phrase ("that's all", etc.) and apply_updates already
-    # moved phase to "summary" because the hard floor is met — analyze_turn's reply text
-    # promises to summarize and generate right now (per the FINISH_COLLECTING prompt guidance),
-    # so this must actually fire this turn rather than silently ending and leaving that promise
-    # unfulfilled until the recruiter sends a separate "generate" message. apply_updates only
-    # ever sets phase to "summary" from within the "collecting" branch, so this can't misfire on
-    # an edit to an already-published job (that path stays in "editing"/"published" instead).
-    if (
-        intent == Intent.FINISH_COLLECTING.value
-        and state.get("phase") == "summary"
-        and not (state.get("missing_essential") or [])
-    ):
-        return "generate_jd"
-
     if intent == Intent.REQUEST_REFINEMENT.value and jd_versions and state.get("selected_version"):
         return "refine_jd"
 
-    # Publishing is deliberately NEVER routed here, regardless of intent — it only ever happens
-    # via the direct POST /api/chat/{session_id}/publish endpoint the "Publish Job" button calls,
-    # never as a side effect of a chat turn (see the CONFIRM_PUBLISH prompt guidance: a chat
-    # confirmation gets acknowledged in the reply text, but the graph itself takes no action).
+    # Generation is deliberately NEVER routed here, regardless of intent — collecting job
+    # details is the bot's job, but actually calling the model to WRITE the description only
+    # ever happens via the direct POST /api/chat/{session_id}/generate endpoint the "Generate
+    # Full Description"/"Regenerate" button calls, never as a side effect of a chat turn (see
+    # the REQUEST_JD_GENERATION / FINISH_COLLECTING prompt guidance: a chat "generate it now" or
+    # a finish phrase gets acknowledged and pointed at the button, but the graph itself takes no
+    # action). Same principle as publishing below — the recruiter presses a real button for both
+    # of the two consequential, hard-to-undo-cheaply actions in this flow.
+
+    # Publishing is deliberately NEVER routed here either — it only ever happens via the direct
+    # POST /api/chat/{session_id}/publish endpoint the "Publish Job" button calls (see the
+    # CONFIRM_PUBLISH prompt guidance: a chat confirmation gets acknowledged in the reply text,
+    # but the graph itself takes no action).
 
     # Regeneration is deliberately NEVER auto-triggered by an edit that makes the JD stale
-    # either — it only happens via REQUEST_JD_GENERATION (the FINISH_COLLECTING branch above for
-    # the very first draft, or an explicit "regenerate" request/button click afterward). An edit
-    # just leaves jd_stale=true as a visible signal, nothing more.
+    # either — an edit just leaves jd_stale=true as a visible signal, nothing more; only an
+    # explicit Regenerate click (also the direct /generate endpoint) clears it.
     return END

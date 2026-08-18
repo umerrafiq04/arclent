@@ -115,6 +115,9 @@ const api = {
       method: "PATCH",
       body: JSON.stringify(patch),
     }),
+  // The ONLY call that actually generates/regenerates the job description — a direct action,
+  // never a side effect of a chat message.
+  generateJd: (sessionId) => apiRequest(`/chat/${encodeURIComponent(sessionId)}/generate`, { method: "POST" }),
   // The ONLY call that actually publishes a job or a published-job edit — a direct action, never
   // a side effect of a chat message.
   publishJob: (sessionId) => apiRequest(`/chat/${encodeURIComponent(sessionId)}/publish`, { method: "POST" }),
