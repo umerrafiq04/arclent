@@ -6,6 +6,7 @@ langgraph
 langgraph-checkpoint-sqlite
 langchain-core
 langchain-mistralai
+langchain-deepseek
 pypdf
 python-multipart
 argon2-cffi>=23

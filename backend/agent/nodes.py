@@ -354,9 +354,13 @@ _KEYWORD_FIELD_HINTS = (
 )
 
 # Absolute last resort when a question produced zero options and no field could even be guessed
-# (e.g. an open "anything else?" / "ready to move on?" check) — every question gets SOMETHING
-# tappable, never a bare prompt with nothing to click.
-_GENERIC_FALLBACK_OPTIONS = ["That's all", "Let me add more"]
+# (e.g. the model failed to supply its own role-specific skill/responsibility suggestions for an
+# open "any others?" question). A single, unambiguous "Skip" — matching the same word/style as
+# the real Skip button elsewhere — rather than a vague "That's all"/"Let me add more" pair, which
+# didn't tell the recruiter what either option actually did (free text is always available
+# regardless, so a second "add more" chip added no real function). Every question still gets
+# SOMETHING tappable, never a bare prompt with nothing to click.
+_GENERIC_FALLBACK_OPTIONS = ["Skip"]
 
 
 def apply_field_changes(

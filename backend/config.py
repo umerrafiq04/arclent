@@ -9,6 +9,14 @@ load_dotenv(BASE_DIR / ".env")
 MISTRAL_API_KEY = os.getenv("MISTRAL_API_KEY", "")
 MISTRAL_MODEL = os.getenv("MISTRAL_MODEL", "mistral-large-latest")
 
+# The active LLM provider for backend/agent/llm.py — "deepseek" or "mistral". DeepSeek is the
+# default now (own dedicated account/quota, not shared with anything else hitting the Mistral
+# key) — Mistral stays fully wired so this is a one-variable rollback, not a code change, if
+# ever needed.
+LLM_PROVIDER = os.getenv("LLM_PROVIDER", "deepseek").lower()
+DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
+DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
+
 APP_DB_PATH = str(BASE_DIR / os.getenv("APP_DB_PATH", "database/recruitment.db"))
 CHECKPOINT_DB_PATH = str(BASE_DIR / os.getenv("CHECKPOINT_DB_PATH", "database/checkpoints.sqlite"))
 

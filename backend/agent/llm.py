@@ -2,27 +2,49 @@ import logging
 import time
 from typing import TypeVar
 
+from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import BaseMessage
-from langchain_mistralai import ChatMistralAI
 from pydantic import BaseModel
 
-from backend.config import MISTRAL_API_KEY, MISTRAL_MODEL
+from backend.config import (
+    DEEPSEEK_API_KEY,
+    DEEPSEEK_MODEL,
+    LLM_PROVIDER,
+    MISTRAL_API_KEY,
+    MISTRAL_MODEL,
+)
 
 logger = logging.getLogger(__name__)
 
 T = TypeVar("T", bound=BaseModel)
 
-_llm: ChatMistralAI | None = None
+_llm: BaseChatModel | None = None
 
 
-def get_llm() -> ChatMistralAI:
+def get_llm() -> BaseChatModel:
+    """Provider is chosen by LLM_PROVIDER ("deepseek" or "mistral") — everything downstream
+    (call_structured, every node that calls it) only depends on the standard LangChain
+    BaseChatModel + with_structured_output() interface, so swapping providers never needs to
+    touch any calling code, only this one function.
+    """
     global _llm
     if _llm is None:
-        if not MISTRAL_API_KEY:
-            raise RuntimeError(
-                "MISTRAL_API_KEY is not set. Copy .env.example to .env and add your key."
-            )
-        _llm = ChatMistralAI(model=MISTRAL_MODEL, api_key=MISTRAL_API_KEY, temperature=0.2)
+        if LLM_PROVIDER == "mistral":
+            from langchain_mistralai import ChatMistralAI
+
+            if not MISTRAL_API_KEY:
+                raise RuntimeError(
+                    "MISTRAL_API_KEY is not set. Copy .env.example to .env and add your key."
+                )
+            _llm = ChatMistralAI(model=MISTRAL_MODEL, api_key=MISTRAL_API_KEY, temperature=0.2)
+        else:
+            from langchain_deepseek import ChatDeepSeek
+
+            if not DEEPSEEK_API_KEY:
+                raise RuntimeError(
+                    "DEEPSEEK_API_KEY is not set. Copy .env.example to .env and add your key."
+                )
+            _llm = ChatDeepSeek(model=DEEPSEEK_MODEL, api_key=DEEPSEEK_API_KEY, temperature=0.2)
     return _llm
 
 
