@@ -48,13 +48,17 @@ COMPANY_OVERRIDE_FIELDS = {
     "work_life_balance", "why_join_us",
 }
 
-# Fields a recruiter can always decline to answer without blocking the conversation — everything
-# except job_title and required_skills/responsibilities, which sufficiency.py's hard floor never
-# lets go missing. A turn may only offer a "Skip this" affordance for a field in this set, and
-# only when that field isn't currently flagged essential for this specific role (see apply_updates).
+# Fields a recruiter can decline to answer without blocking the conversation. job_title is never
+# in here — sufficiency.py's hard floor never lets it go missing. required_skills/responsibilities
+# ARE in here even though the hard floor requires at least one of the two: apply_updates only ever
+# lets the "Skip this" affordance through for whichever of the pair is NOT the one currently
+# satisfying the hard floor (checked against the "required_skills_or_responsibilities" sentinel in
+# missing_essential), so the floor itself can never actually be skipped away — only the redundant
+# second ask once the first already covers it.
 OPTIONAL_SKIPPABLE_FIELDS = {
     "job_category", "experience", "location", "work_mode", "employment_type",
     "education", "salary", "deadline", "additional_information", "preferred_skills",
+    "required_skills", "responsibilities",
 }
 
 

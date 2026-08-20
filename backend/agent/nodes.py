@@ -151,6 +151,32 @@ def analyze_turn(state: GraphState) -> dict:
         }
 
     updates: dict = {}
+
+    # Deterministic interpretation of a closing-check reply when it's an EXACT chip click — never
+    # trust the model's own reading here even with the clearer chip wording (see FINAL CLOSING
+    # CHECK in prompts.py), since a yes/no-shaped question next to two options has been observed
+    # live to still occasionally get misread. A chip click always sends the exact label text back
+    # as the user's message, so matching it verbatim is a hard guarantee, not a heuristic.
+    if state.get("closing_check_asked"):
+        last_human_text = ""
+        for m in reversed(state.get("messages") or []):
+            if isinstance(m, HumanMessage):
+                last_human_text = (m.content or "").strip()
+                break
+        normalized = last_human_text.lower()
+        if normalized == _CLOSING_CHECK_MORE_OPTION.lower():
+            analysis = analysis.model_copy(
+                update={
+                    "enough_information": False,
+                    "response": "No problem — what would you like to add?",
+                    "asking_about_field": None,
+                    "suggested_options": [],
+                    "options_multi_select": False,
+                }
+            )
+        elif normalized == _CLOSING_CHECK_READY_OPTION.lower():
+            analysis = analysis.model_copy(update={"enough_information": True})
+
     response_lower = (analysis.response or "").lower()
     is_skills_followup = "?" in response_lower and ("skill" in response_lower or "respons" in response_lower)
     followup_count = state.get("skills_followup_count", 0)
@@ -160,8 +186,11 @@ def analyze_turn(state: GraphState) -> dict:
             # skills/responsibilities yet again. Merge in this turn's own field_updates first so a
             # message that named a field (e.g. "Add Python, and it's hybrid") isn't immediately
             # re-asked about.
-            prospective_job_state = dict(state.get("job_state") or {})
-            prospective_job_state.update(analysis.field_updates or {})
+            prospective_job_state = apply_field_changes(
+                state.get("job_state") or {},
+                analysis.field_updates,
+                [op.model_dump() for op in analysis.list_operations],
+            )
             skipped = set(state.get("skipped_checklist_fields") or [])
             next_field = _next_checklist_prompt(prospective_job_state, skipped)
             if next_field:
@@ -186,6 +215,64 @@ def analyze_turn(state: GraphState) -> dict:
                 )
         else:
             updates["skills_followup_count"] = followup_count + 1
+
+    # Never trust enough_information=true at face value: cross-check it against the same
+    # deterministic checklist ready_to_generate() relies on. Verified live that the model reaches
+    # this point far more often than prompt compliance alone would suggest — it reliably asks
+    # through the original 4 fields, then jumps straight to "Everything's captured", skipping
+    # education/salary/a still-unresolved skills-family question/the closing check entirely despite
+    # explicit instructions covering each. Also verified live that even when the model DOES
+    # spontaneously ask its own closing-style question (enough_information already false, so the
+    # check below wouldn't otherwise fire), it drifts back into a "Yes, I have more to add"-shaped
+    # chip pair despite explicit prompt instructions not to — so a closing-style question is always
+    # replaced with our own canonical wording too, not just a premature "done". This guarantees the
+    # chip text the recruiter actually sees always exactly matches _CLOSING_CHECK_OPTIONS, which is
+    # what lets the exact-match reply interpretation above work at all — a spontaneously-worded pair
+    # from the model can't be reliably matched there.
+    response_lower_now = (analysis.response or "").lower()
+    looks_like_closing_check = "?" in response_lower_now and (
+        "anything else" in response_lower_now
+        or ("ready" in response_lower_now and "generate" in response_lower_now)
+    )
+    if analysis.enough_information or looks_like_closing_check:
+        prospective_job_state = apply_field_changes(
+            state.get("job_state") or {},
+            analysis.field_updates,
+            [op.model_dump() for op in analysis.list_operations],
+        )
+        if hard_floor_met(prospective_job_state):
+            skipped = set(state.get("skipped_checklist_fields") or [])
+            next_field = _next_checklist_prompt(prospective_job_state, skipped)
+            if next_field and analysis.enough_information:
+                # Model thinks it's done but a real field is still unresolved — same fix pattern as
+                # the skills-loop-cap override above, just triggered by "declared done too early"
+                # instead of "asked about skills too many times."
+                question, field, chips = next_field
+                analysis = analysis.model_copy(
+                    update={
+                        "response": f"Got it, noted! {question}",
+                        "asking_about_field": field,
+                        "suggested_options": chips,
+                        "options_multi_select": False,
+                        "enough_information": False,
+                    }
+                )
+            elif next_field is None and not state.get("closing_check_asked") and analysis.intent != Intent.FINISH_COLLECTING:
+                # Checklist is genuinely complete and the closing check hasn't run yet — ask it with
+                # OUR wording, whether the model tried to skip it outright or just phrased its own
+                # version of it, UNLESS the recruiter's own message this turn was already an
+                # explicit finish phrase (that already answers "anything else?" on its own — see
+                # FINAL CLOSING CHECK in prompts.py).
+                analysis = analysis.model_copy(
+                    update={
+                        "response": _CLOSING_CHECK_RESPONSE,
+                        "asking_about_field": None,
+                        "suggested_options": _CLOSING_CHECK_OPTIONS,
+                        "options_multi_select": False,
+                        "enough_information": False,
+                    }
+                )
+                updates["closing_check_asked"] = True
 
     clean_response = _strip_markdown(analysis.response)
     dumped = analysis.model_dump(mode="json")
@@ -241,26 +328,65 @@ _DEFAULT_OPTIONS_BY_FIELD = {
 # of the frustration). SKILLS_FOLLOWUP_CAP deterministically cuts that off in analyze_turn below:
 # once this many skills/responsibilities-flavored questions have been asked across the whole
 # conversation, any further one gets swapped for a canned pivot to the next unresolved standard
-# checklist field instead of trusting the model to stop on its own.
-_SKILLS_FOLLOWUP_CAP = 2
+# checklist field instead of trusting the model to stop on its own. Set to 3, not lower: required
+# skills, preferred skills, and responsibilities are each a MANDATORY once-only ask (see the
+# "skills-family follow-ups" section of SYSTEM_PROMPT_TEMPLATE) — a cap of 2 would sweep the
+# legitimate 3rd question into this override and rob it of the model's own contextual chip
+# suggestions (real skill/tool names) in favor of a generic canned "Skip" fallback. Only a genuine
+# 4th+ skill-flavored question — an actual runaway loop — should ever hit this cap.
+_SKILLS_FOLLOWUP_CAP = 3
 
-_CHECKLIST_ORDER = ["experience", "location", "work_mode", "employment_type"]
+_CHECKLIST_ORDER = [
+    "required_skills",
+    "responsibilities",
+    "preferred_skills",
+    "experience",
+    "location",
+    "work_mode",
+    "employment_type",
+    "education",
+    "salary",
+]
 _CHECKLIST_QUESTIONS = {
+    "required_skills": "What are the required skills a candidate should have for this role?",
+    "responsibilities": "What will this person be responsible for day-to-day?",
+    "preferred_skills": "Would you like to add any preferred (nice-to-have) skills for this role?",
     "experience": "How many years of experience should this role require?",
     "location": 'Which city or region will this role be based in? You can also say "Worldwide" if it\'s fully remote.',
     "work_mode": "Should this role be Remote, Hybrid, or Onsite?",
     "employment_type": "Should this be a Full-time, Part-time, Contract, or Internship position?",
+    "education": "What's the minimum education level for this role, if any?",
+    "salary": "What's the salary range for this role, if you'd like to share one?",
 }
 _CHECKLIST_CHIPS = {
+    "required_skills": ["Skip"],
+    "responsibilities": ["Skip"],
+    "preferred_skills": ["Skip"],
     "experience": _DEFAULT_OPTIONS_BY_FIELD["experience"],
     "location": ["Worldwide", "New York", "London", "Bangalore"],
     "work_mode": _DEFAULT_OPTIONS_BY_FIELD["work_mode"],
     "employment_type": _DEFAULT_OPTIONS_BY_FIELD["employment_type"],
+    "education": _DEFAULT_OPTIONS_BY_FIELD["education"],
+    "salary": ["Skip"],
 }
 _READY_TO_GENERATE_RESPONSE = (
     'Everything\'s captured for this role! Click "Generate Full Description" in the panel on the '
     "right whenever you're ready."
 )
+
+# The FINAL CLOSING CHECK question from prompts.py, mirrored here so analyze_turn can ask it
+# deterministically when the model skips straight past it (verified live: the model reliably walks
+# the checklist far enough to satisfy the hard floor, then jumps straight to "Everything's
+# captured" without ever asking this) and so a chip click on it can be interpreted deterministically
+# rather than trusting the model to read "Not yet, I have more to add" correctly every time. Keep
+# these three strings in sync with the FINAL CLOSING CHECK section of SYSTEM_PROMPT_TEMPLATE.
+_CLOSING_CHECK_RESPONSE = (
+    "That covers everything I need — is there anything else you'd like to add before we finalize "
+    "this, or are you ready to generate the description?"
+)
+_CLOSING_CHECK_READY_OPTION = "I'm ready, let's generate"
+_CLOSING_CHECK_MORE_OPTION = "Not yet, I have more to add"
+_CLOSING_CHECK_OPTIONS = [_CLOSING_CHECK_READY_OPTION, _CLOSING_CHECK_MORE_OPTION]
 
 
 def _next_checklist_prompt(job_state: dict, skipped: set[str] | None = None) -> tuple[str, str, list[str]] | None:
@@ -328,10 +454,16 @@ def ready_to_generate(state: GraphState) -> bool:
     button's enabled state and the direct /generate endpoint's own guard — never rely on the LLM's
     own judgment (or the UI simply being clickable) as proof enough information was collected.
 
-    Already-published jobs are grandfathered past the checklist re-check: editing an existing,
-    previously-complete job (job_id is set) shouldn't suddenly re-gate Regenerate just because this
-    thread's own skipped_checklist_fields is empty (it was hydrated from the DB row, not derived
-    from live chat) — only fresh, not-yet-published drafts enforce the checklist.
+    The checklist resolving isn't the last word either: the FINAL CLOSING CHECK (see prompts.py)
+    still needs to have actually been asked AND answered with readiness — without requiring
+    closing_check_confirmed too, the button would enable the instant the last checklist field
+    resolves (e.g. a Skip click), before the recruiter ever saw or answered "anything else, or are
+    you ready?".
+
+    Already-published jobs are grandfathered past both checks: editing an existing, previously
+    -complete job (job_id is set) shouldn't suddenly re-gate Regenerate just because this thread's
+    own skipped_checklist_fields/closing_check_confirmed are empty (hydrated from the DB row, not
+    derived from live chat) — only fresh, not-yet-published drafts enforce either one.
     """
     job_state = state.get("job_state") or {}
     if not hard_floor_met(job_state):
@@ -339,7 +471,9 @@ def ready_to_generate(state: GraphState) -> bool:
     if state.get("job_id") is not None:
         return True
     skipped = set(state.get("skipped_checklist_fields") or [])
-    return checklist_resolved(job_state, skipped)
+    if not checklist_resolved(job_state, skipped):
+        return False
+    return bool(state.get("closing_check_confirmed"))
 
 
 # Last-resort keyword sniffing on the response TEXT — the model sometimes spells options out in
@@ -427,6 +561,29 @@ def apply_updates(state: GraphState, config: RunnableConfig) -> dict:
     llm_enough = bool(analysis.get("enough_information"))
     llm_missing = analysis.get("missing_essential") or []
 
+    # Monotonic, like skipped_checklist_fields: once the closing check has actually been asked AND
+    # answered with enough_information=true on some LATER turn (never the same turn it was first
+    # asked — analyze_turn always forces enough_information=false on that turn), remember it. This
+    # is what ready_to_generate() requires in addition to the checklist itself — without it, the
+    # Generate button would enable the instant the last checklist field resolves (e.g. via a Skip
+    # click), before the recruiter ever actually answered "anything else, or are you ready?".
+    # Reading the final, already-cross-checked enough_information here (rather than re-deriving
+    # "did they mean ready" ourselves) is safe: every path that could set it true on a
+    # closing-check-in-progress turn has already been forced through analyze_turn's exact-match chip
+    # interpretation or its own prompt-compliance check, not trusted blind. An explicit finish phrase
+    # (FINISH_COLLECTING) counts too even if the closing check was never asked at all — that's the
+    # documented exception in FINAL CLOSING CHECK (prompts.py): a finish phrase already answers
+    # "anything else?" on its own, so it shouldn't leave the gate stuck waiting for a question that,
+    # by design, never gets asked in that case.
+    closing_check_confirmed = bool(state.get("closing_check_confirmed"))
+    if intent == Intent.FINISH_COLLECTING.value:
+        # Same trust level the phase="summary" transition below already gives FINISH_COLLECTING
+        # without double-checking enough_information — ready_to_generate() separately re-verifies
+        # hard_floor_met + checklist_resolved regardless, so this alone can never unlock the button.
+        closing_check_confirmed = True
+    elif state.get("closing_check_asked") and llm_enough:
+        closing_check_confirmed = True
+
     ok = sufficiency_ok(job_state, llm_enough, llm_missing)
     missing = combined_missing_essential(job_state, llm_missing)
     content_changed = job_state != original_job_state
@@ -492,9 +649,20 @@ def apply_updates(state: GraphState, config: RunnableConfig) -> dict:
     # dropped both the Skip button and every chip on an obviously-a-question turn.
     asking_about_field = analysis.get("asking_about_field")
     reply_is_a_question = "?" in analysis.get("response", "")
+    # required_skills/responsibilities are in OPTIONAL_SKIPPABLE_FIELDS (see models.py) so whichever
+    # one ISN'T covering the hard floor can still get a "Skip this" button — but only once the other
+    # one already has content. Neither individual field name ever appears in `missing` (the hard
+    # floor tracks them jointly as the "required_skills_or_responsibilities" sentinel), so the
+    # generic `asking_about_field in missing` check above can't catch the case where BOTH are still
+    # empty — without this, the floor itself could be skipped away entirely.
+    skills_pair_floor_unmet = (
+        asking_about_field in ("required_skills", "responsibilities")
+        and "required_skills_or_responsibilities" in missing
+    )
     if (
         asking_about_field not in OPTIONAL_SKIPPABLE_FIELDS
         or asking_about_field in missing
+        or skills_pair_floor_unmet
         or not reply_is_a_question
     ):
         asking_about_field = None
@@ -513,6 +681,26 @@ def apply_updates(state: GraphState, config: RunnableConfig) -> dict:
             if any(phrase in response_lower for phrase in phrases):
                 asking_about_field = candidate_field
                 break
+
+    # A recruiter who verbally declines an optional field ("no preference", "not needed", "we can
+    # skip that") never touches the literal Skip button — but ready_to_generate()/checklist_resolved
+    # only ever trust skipped_checklist_fields, never the model's own "enough_information" judgment
+    # (see nodes.py docstrings). Without this, a verbally-declined optional field leaves the
+    # checklist gate stuck open forever: the conversation moves on, but the Generate button stays
+    # disabled with nothing left on screen to click. Detect the advance deterministically instead of
+    # trusting the model to have "meant" to skip it: if we were asking about an optional field last
+    # turn and it's still unset after this turn's updates, and the model isn't asking about that
+    # same field again right now, the recruiter's reply moved past it — treat it exactly like an
+    # explicit Skip click.
+    skipped_checklist_fields = set(state.get("skipped_checklist_fields") or [])
+    previous_asking_about_field = state.get("asking_about_field")
+    if (
+        previous_asking_about_field
+        and previous_asking_about_field in OPTIONAL_SKIPPABLE_FIELDS
+        and not job_state.get(previous_asking_about_field)
+        and asking_about_field != previous_asking_about_field
+    ):
+        skipped_checklist_fields.add(previous_asking_about_field)
 
     # Same defense-in-depth as asking_about_field above — only ever surface chips on a turn
     # that's actually posing a question, regardless of what the model returned.
@@ -551,6 +739,8 @@ def apply_updates(state: GraphState, config: RunnableConfig) -> dict:
         "asking_about_field": asking_about_field,
         "suggested_options": suggested_options,
         "options_multi_select": options_multi_select,
+        "skipped_checklist_fields": list(skipped_checklist_fields),
+        "closing_check_confirmed": closing_check_confirmed,
     }
 
 

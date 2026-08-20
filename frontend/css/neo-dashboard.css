@@ -918,6 +918,15 @@ body.neo .empty-state {
   cursor: default;
 }
 
+/* Standing reminder that typing is always available too, not just the chips above — deliberately
+   quiet (no border/background) so it doesn't compete with the real, actionable chip/skip rows. */
+.jm-type-hint {
+  margin-left: 34px;
+  margin-top: 4px;
+  font-size: 11.5px;
+  color: var(--neo-muted, #6b6858);
+}
+
 /* ---------- Confetti (publish celebration) ---------- */
 
 .jm-confetti {

@@ -10,6 +10,8 @@ logger = logging.getLogger(__name__)
 
 from backend.agent.graph import get_compiled_graph
 from backend.agent.nodes import (
+    _CLOSING_CHECK_OPTIONS,
+    _CLOSING_CHECK_RESPONSE,
     _job_state_from_record,
     _next_checklist_prompt,
     _READY_TO_GENERATE_RESPONSE,
@@ -400,6 +402,18 @@ def skip_field(session_id: str, user: dict = Depends(get_current_recruiter)) -> 
             "asking_about_field": field,
             "suggested_options": chips,
             "options_multi_select": False,
+        }
+    elif not state.get("closing_check_asked"):
+        # The checklist just became fully resolved via this skip — ask the same one-time closing
+        # question analyze_turn asks on the LLM-driven path (see FINAL CLOSING CHECK in prompts.py)
+        # instead of declaring things done immediately. Kept in sync here since this direct,
+        # LLM-free endpoint has its own copy of the "what's next" decision.
+        response_text = _CLOSING_CHECK_RESPONSE
+        update = {
+            "asking_about_field": None,
+            "suggested_options": _CLOSING_CHECK_OPTIONS,
+            "options_multi_select": False,
+            "closing_check_asked": True,
         }
     else:
         response_text = _READY_TO_GENERATE_RESPONSE

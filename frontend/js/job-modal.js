@@ -108,6 +108,19 @@
     return row;
   }
 
+  // Chips are a shortcut, never the only path — every question can also be answered by typing in
+  // the box below instead. Recruiters kept assuming chips were mandatory, so this stays visible
+  // as a standing reminder next to every chip row rather than something the bot has to say in
+  // text (which would make every single message longer and repetitive).
+  function appendTypeHint(afterRow) {
+    const hint = document.createElement("div");
+    hint.className = "jm-type-hint";
+    hint.textContent = "Or type your own answer below";
+    afterRow.insertAdjacentElement("afterend", hint);
+    messageList.scrollTop = messageList.scrollHeight;
+    return hint;
+  }
+
   // The backend only ever sets asking_about_field when its latest reply is a live question
   // about one specific OPTIONAL field (see apply_updates in nodes.py) — never fabricated
   // client-side. Recruiters who don't have that piece of info (or just don't want to answer)
@@ -214,7 +227,8 @@
         ? `Hi ${window.recruiterFirstName}, what are you hiring for today? 👋`
         : "What are you hiring for today? 👋";
       const row = appendMessage("ai", greeting);
-      appendChips(row, pickRoleChips(4), false);
+      const chipRow = appendChips(row, pickRoleChips(4), false);
+      appendTypeHint(chipRow || row);
       return;
     }
     let lastAiRow = null;
@@ -227,6 +241,7 @@
     let insertAfter = lastAiRow;
     if (suggestedOptions && suggestedOptions.length) {
       insertAfter = appendChips(lastAiRow, suggestedOptions, multiSelect) || lastAiRow;
+      insertAfter = appendTypeHint(insertAfter) || insertAfter;
     }
     if (askingAboutField) {
       appendSkipButton(insertAfter, askingAboutField);
