@@ -42,8 +42,8 @@ from backend.models import (
 logger = logging.getLogger(__name__)
 
 FALLBACK_RESPONSE = (
-    "Sorry, I didn't quite catch that — could you rephrase, or tell me a bit more "
-    "about the role you're hiring for?"
+    "Sorry, I hit a snag processing that just now — this wasn't about anything you said, "
+    "our end had trouble keeping up for a moment. Please try sending that again."
 )
 
 _MD_BOLD_RE = re.compile(r"\*\*(.+?)\*\*")
@@ -580,8 +580,9 @@ def generate_jd(state: GraphState, config: RunnableConfig) -> dict:
     except Exception:
         logger.exception("generate_jd: structured output failed after retry")
         response = (
-            "I ran into a problem generating the job description just now — could you ask me to "
-            "generate it again?"
+            "I hit a snag generating the job description just now — this wasn't about anything "
+            "you entered, our end had trouble keeping up for a moment. Please click Generate "
+            "again in a few seconds."
         )
         return {"messages": [AIMessage(content=response)], "last_response": response}
 
@@ -630,7 +631,10 @@ def refine_jd(state: GraphState, config: RunnableConfig) -> dict:
         output = call_structured(JDRefinementOutput, messages, retries=2)
     except Exception:
         logger.exception("refine_jd: structured output failed after retry")
-        response = "I had trouble applying that change — could you rephrase what you'd like adjusted?"
+        response = (
+            "I hit a snag applying that change — this wasn't about anything you said, our end had "
+            "trouble keeping up for a moment. Please try that again."
+        )
         return {"messages": [AIMessage(content=response)], "last_response": response}
 
     updated_jd = _strip_markdown(output.updated_jd.model_dump(mode="json"))
