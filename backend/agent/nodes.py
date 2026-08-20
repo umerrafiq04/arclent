@@ -144,11 +144,7 @@ def analyze_turn(state: GraphState) -> dict:
         raise
     except Exception:
         logger.exception("analyze_turn: structured output failed after retry")
-        fallback = TurnAnalysis(
-            intent=Intent.CHITCHAT_OR_UNCLEAR,
-            enough_information=False,
-            response=FALLBACK_RESPONSE,
-        )
+        fallback = _fallback_turn_analysis(state)
         return {
             "pending_analysis": fallback.model_dump(mode="json"),
             "messages": [AIMessage(content=fallback.response)],
@@ -283,6 +279,68 @@ def _next_checklist_prompt(job_state: dict, skipped: set[str] | None = None) -> 
         if not job_state.get(field):
             return _CHECKLIST_QUESTIONS[field], field, _CHECKLIST_CHIPS[field]
     return None
+
+
+def _fallback_turn_analysis(state: GraphState) -> TurnAnalysis:
+    """Built when call_structured exhausts its retries (a Mistral 429 burst, or a rarer
+    unparseable structured-output response — indistinguishable from here). The recruiter's own
+    last message is always lost either way (analyze_turn never got far enough to read it), but
+    they shouldn't ALSO lose the guided checklist they were mid-way through: if the hard floor is
+    already met, re-ask deterministically — the same helper the skills-loop-cap override and the
+    /skip-field endpoint already use — with real chips instead of a dead-end "please rephrase."
+    Only the genuinely-unknown-state case (no title/skills yet) keeps the bare rephrase message,
+    since there's nothing deterministic to ask instead.
+    """
+    job_state = state.get("job_state") or {}
+    if hard_floor_met(job_state):
+        skipped = set(state.get("skipped_checklist_fields") or [])
+        next_field = _next_checklist_prompt(job_state, skipped)
+        if next_field:
+            question, field, chips = next_field
+            return TurnAnalysis(
+                intent=Intent.CHITCHAT_OR_UNCLEAR,
+                enough_information=False,
+                response=f"Sorry, I had trouble processing that last message — could you confirm: {question}",
+                asking_about_field=field,
+                suggested_options=chips,
+                options_multi_select=False,
+            )
+        return TurnAnalysis(
+            intent=Intent.CHITCHAT_OR_UNCLEAR,
+            enough_information=True,
+            response=_READY_TO_GENERATE_RESPONSE,
+        )
+    return TurnAnalysis(intent=Intent.CHITCHAT_OR_UNCLEAR, enough_information=False, response=FALLBACK_RESPONSE)
+
+
+def checklist_resolved(job_state: dict, skipped: set[str] | None = None) -> bool:
+    """True once every standard-checklist field is either set or explicitly skipped."""
+    skipped = skipped or set()
+    return all(field in skipped or job_state.get(field) for field in _CHECKLIST_ORDER)
+
+
+def ready_to_generate(state: GraphState) -> bool:
+    """Hard floor (title + skills-or-responsibilities) is necessary but not sufficient for
+    generation — without also requiring the standard checklist to be resolved, the JD generation
+    prompt ends up working from a job_state thin enough that its own "role-standard enrichment"
+    instructions invent specifics the recruiter never gave (a degree requirement, a certification,
+    a year count). This is the single source of truth for both the "Generate Full Description"
+    button's enabled state and the direct /generate endpoint's own guard — never rely on the LLM's
+    own judgment (or the UI simply being clickable) as proof enough information was collected.
+
+    Already-published jobs are grandfathered past the checklist re-check: editing an existing,
+    previously-complete job (job_id is set) shouldn't suddenly re-gate Regenerate just because this
+    thread's own skipped_checklist_fields is empty (it was hydrated from the DB row, not derived
+    from live chat) — only fresh, not-yet-published drafts enforce the checklist.
+    """
+    job_state = state.get("job_state") or {}
+    if not hard_floor_met(job_state):
+        return False
+    if state.get("job_id") is not None:
+        return True
+    skipped = set(state.get("skipped_checklist_fields") or [])
+    return checklist_resolved(job_state, skipped)
+
 
 # Last-resort keyword sniffing on the response TEXT — the model sometimes spells options out in
 # prose ("...4-6 years, or 7+ years?") without ALSO populating suggested_options, or asks a

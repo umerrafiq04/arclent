@@ -85,8 +85,9 @@ a {
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  margin: 16px 20px;
-  padding: 10px 18px;
+  max-width: var(--page-max-width);
+  margin: 16px auto;
+  padding: 10px 32px;
   background: var(--color-surface);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-lg);
@@ -165,6 +166,11 @@ a {
 
 .btn:active {
   transform: translateY(1px);
+}
+
+.btn:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
 }
 
 .btn-primary {
@@ -249,6 +255,13 @@ a {
 
 .top-nav-logout:hover {
   color: var(--color-text);
+}
+
+.top-nav a:focus-visible,
+.top-nav-logout:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+  border-radius: 4px;
 }
 
 /* Mobile-dropdown-only mirrors of header actions (Job Details, Edit Company on
@@ -1119,6 +1132,11 @@ a {
 .icon-btn:hover {
   background: var(--color-accent-bg);
   color: var(--color-primary-dark);
+}
+
+.icon-btn:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
 }
 
 .chat-input-row textarea {

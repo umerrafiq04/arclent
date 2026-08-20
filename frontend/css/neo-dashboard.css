@@ -121,6 +121,11 @@ body.neo .neo-btn:active {
   transform: translateY(0);
 }
 
+body.neo .neo-btn:focus-visible {
+  outline: 2px solid var(--neo-black, #14140f);
+  outline-offset: 2px;
+}
+
 body.neo .neo-btn-solid {
   background: var(--neo-black);
   color: #fff;
@@ -146,9 +151,16 @@ body.neo .neo-btn:disabled {
 
 body.neo .neo-stat-row {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 16px;
   margin-bottom: 20px;
+}
+
+@media (max-width: 520px) {
+  body.neo .neo-stat-row,
+  body.neo .stat-row {
+    grid-template-columns: 1fr;
+  }
 }
 
 body.neo .neo-stat-card {
@@ -304,6 +316,40 @@ body.neo .neo-job-actions {
   position: relative;
 }
 
+/* Explicit stacking order on narrow screens — same pattern as .job-list-row's own mobile block
+   in styles.css (order per child) rather than leaving it to incidental flex-wrap math, so a long
+   title or an older/narrower device still lays out predictably: avatar+title/tags together,
+   actions on their own full-width row below. */
+@media (max-width: 640px) {
+  body.neo .neo-job-row {
+    row-gap: 10px;
+  }
+
+  body.neo .neo-job-avatar {
+    order: 1;
+  }
+
+  body.neo .neo-job-main {
+    order: 2;
+    flex: 1 1 auto;
+  }
+
+  body.neo .neo-job-actions {
+    order: 3;
+    flex: 1 1 100%;
+  }
+
+  /* The Manage ▾ menu is positioned relative to its own small wrapper (just the button, not the
+     full actions row) — right-anchored, that wrapper sits near the left edge of a full-width
+     mobile row, so a 170px-wide menu extending leftward from it runs off-screen. Anchor from the
+     left instead on mobile, where Manage is always the leftmost control, so it opens rightward
+     into the available space instead. Desktop keeps the existing right-anchor unchanged. */
+  body.neo .neo-manage-menu {
+    left: 0;
+    right: auto;
+  }
+}
+
 /* ---------- Manage menu (popover) ---------- */
 
 body.neo .neo-manage-menu {
@@ -316,13 +362,22 @@ body.neo .neo-manage-menu {
   border: var(--neo-border-w) solid var(--neo-black);
   border-radius: var(--neo-radius-sm);
   padding: 6px;
-  display: none;
+  display: flex;
   flex-direction: column;
   gap: 2px;
+  opacity: 0;
+  transform: translateY(-4px) scale(0.98);
+  visibility: hidden;
+  pointer-events: none;
+  transition: opacity 0.14s ease, transform 0.14s ease, visibility 0s linear 0.14s;
 }
 
 body.neo .neo-manage-menu.open {
-  display: flex;
+  opacity: 1;
+  transform: translateY(0) scale(1);
+  visibility: visible;
+  pointer-events: auto;
+  transition: opacity 0.14s ease, transform 0.14s ease, visibility 0s linear 0s;
 }
 
 body.neo .neo-manage-menu button {
@@ -461,7 +516,7 @@ body.neo .btn.btn-outline {
 
 body.neo .stat-row {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 16px;
   margin-bottom: 20px;
 }
@@ -472,6 +527,11 @@ body.neo .stat-card {
   border-radius: var(--neo-radius);
   box-shadow: none;
   padding: 18px 20px;
+}
+
+body.neo .stat-card:hover {
+  box-shadow: none;
+  transform: none;
 }
 
 body.neo .stat-row .stat-card:nth-child(2) { background: var(--neo-yellow); }
@@ -668,8 +728,8 @@ body.neo .empty-state {
 
 .job-modal {
   width: 100%;
-  max-width: 1180px;
-  height: min(88vh, 900px);
+  max-width: 1440px;
+  height: min(90vh, 960px);
   background: var(--neo-surface, #fff);
   border: 2px solid var(--neo-black, #14140f);
   border-radius: 20px;
@@ -786,6 +846,11 @@ body.neo .empty-state {
 
 .jm-chip:hover:not(:disabled) {
   background: var(--neo-yellow, #ffd23f);
+}
+
+.jm-chip:focus-visible {
+  outline: 2px solid var(--neo-black, #14140f);
+  outline-offset: 2px;
 }
 
 .jm-chip:disabled {

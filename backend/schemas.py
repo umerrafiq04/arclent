@@ -31,6 +31,10 @@ class ChatResponse(BaseModel):
     asking_about_field: str | None = None  # optional field the latest AI question is about, if any
     suggested_options: list[str] = Field(default_factory=list)  # chip labels for the latest AI question, if any
     options_multi_select: bool = False  # whether the recruiter can tap several suggested_options before sending
+    # Deterministic sufficiency signal (hard floor + the standard checklist resolved) — the ONLY
+    # thing that should gate the "Generate Full Description"/"Regenerate" button's enabled state.
+    # Never infer readiness from the LLM's own judgment or from the button simply being clickable.
+    ready_to_generate: bool = False
 
 
 class JobStatePatch(BaseModel):

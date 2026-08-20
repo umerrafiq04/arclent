@@ -564,6 +564,12 @@
     generateBtn.type = "button";
     generateBtn.className = "neo-btn";
     generateBtn.textContent = hasJd ? "⟳ Regenerate" : "✦ Generate Full Description";
+    // Deterministic sufficiency signal from the backend (hard floor + the standard checklist
+    // resolved) — never inferred client-side. Applies uniformly to Generate AND Regenerate: if a
+    // checklist field gets cleared via the draft panel after a JD already exists, Regenerate
+    // correctly re-disables until it's answered again, same principle either way.
+    generateBtn.disabled = !data.ready_to_generate;
+    generateBtn.title = data.ready_to_generate ? "" : "Finish the guided questions in chat to enable this.";
     generateBtn.addEventListener("click", () => generateNow(generateBtn, hasJd));
     actions.appendChild(generateBtn);
 

@@ -284,15 +284,26 @@ ROLE-STANDARD ENRICHMENT (do this — a bare list of the recruiter's literal ski
 professional knowledge of what this job title typically requires to make the requirements/qualifications sections
 genuinely complete, not just a restatement of job_state. Concretely:
 - required_skills and minimum_requirements: the recruiter's explicitly stated mandatory skills/requirements, plus
-  baseline competencies universally expected for this title (e.g. "strong analytical and problem-solving skills"
-  for a Data Analyst) — these read as requirements, not hedged suggestions.
-- preferred_qualifications: role-standard skills/tools/qualifications you're recommending that the recruiter did
-  NOT explicitly mention, phrased as recommendations, not confirmed facts — e.g. "Preferred qualifications may
-  include experience with Power BI or Tableau." Never claim the recruiter required something they didn't say.
-- This enrichment is about the ROLE ONLY (what this kind of job typically needs) — it never extends to inventing
-  COMPANY facts. A recruiter's explicit skill always takes precedence over anything you'd otherwise suggest, and if
-  they only gave one or two skills, still ground your additions in what's genuinely standard for this specific
-  title/seniority/domain rather than generic filler.
+  generic baseline competencies OBVIOUSLY implied by the title itself may also read as requirements — e.g. "strong
+  analytical and problem-solving skills" for a Data Analyst, or "HTML, CSS, and JavaScript" for a role literally
+  titled Front-End Developer (the title itself already implies these, they aren't an inference beyond it).
+- NEVER invent, as either a requirement or a preference, anything the recruiter didn't state that isn't a generic
+  skill obviously implied by the title: no specific education/degree requirement, no certification (PMP, CSPO,
+  AWS-certified, or any other), no specific years-of-experience figure beyond what job_state.experience already
+  says, no salary/compensation figure, no specific named tool or framework that isn't obviously implied by the
+  title itself (e.g. don't add "must know React" just because the role is front-end — React is one of several
+  valid frameworks, not implied by the title the way HTML/CSS/JS is), and no company policy. These are facts that
+  materially change a candidate's eligibility and belong ONLY in the JOB DETAILS above, confirmed by the recruiter
+  — never your own inference, no matter how standard it seems for the role.
+- preferred_qualifications: role-standard skills/tools you're recommending that the recruiter did NOT explicitly
+  mention, phrased as recommendations, not confirmed facts — e.g. "Preferred qualifications may include experience
+  with Power BI or Tableau." The same "never invent a degree/certification/years/salary" rule applies here too — a
+  *recommended* certification is still a fabricated credential; leave it out rather than suggest one.
+- This enrichment is about generic ROLE skills ONLY — it never extends to inventing COMPANY facts, and never
+  extends to inventing CANDIDATE-ELIGIBILITY facts (degrees, certifications, experience thresholds, compensation)
+  that only the recruiter can actually decide. A recruiter's explicit skill always takes precedence over anything
+  you'd otherwise suggest, and if they only gave one or two skills, still ground your additions in genuinely
+  universal, title-implied basics rather than guessing at their actual hiring bar.
 
 Leave requisition_id null — it is assigned by the system when the job is published, not by you.
 Only include a section (accountabilities, requirements, qualifications, benefits, etc.) when there is real content

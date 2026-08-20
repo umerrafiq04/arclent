@@ -17,6 +17,7 @@ from backend.agent.nodes import (
     generate_jd,
     publish_edit,
     publish_job,
+    ready_to_generate,
     route_after_apply,
 )
 from backend.agent.sufficiency import hard_floor_met
@@ -112,6 +113,7 @@ def _to_response(session_id: str, state: dict) -> ChatResponse:
         asking_about_field=state.get("asking_about_field"),
         suggested_options=state.get("suggested_options") or [],
         options_multi_select=bool(state.get("options_multi_select")),
+        ready_to_generate=ready_to_generate(state),
     )
 
 
@@ -343,11 +345,16 @@ def generate_session(session_id: str, user: dict = Depends(get_current_recruiter
     if not state:
         raise HTTPException(status_code=404, detail="No conversation found for this session_id")
 
-    job_state = state.get("job_state") or {}
-    if not hard_floor_met(job_state):
+    if not ready_to_generate(state):
+        job_state = state.get("job_state") or {}
+        if not hard_floor_met(job_state):
+            raise HTTPException(
+                status_code=400,
+                detail="Add at least a job title and one required skill or responsibility before generating.",
+            )
         raise HTTPException(
             status_code=400,
-            detail="Add at least a job title and one required skill or responsibility before generating.",
+            detail="A few more details are needed before generating — experience, location, work mode, and employment type.",
         )
 
     result = generate_jd(state, config)
