@@ -11,11 +11,13 @@ logger = logging.getLogger(__name__)
 from backend.agent.graph import get_compiled_graph
 from backend.agent.nodes import (
     _CLOSING_CHECK_OPTIONS,
+    _CLOSING_CHECK_READY_OPTION,
     _CLOSING_CHECK_RESPONSE,
     _job_state_from_record,
     _next_checklist_prompt,
     _READY_TO_GENERATE_RESPONSE,
     apply_field_changes,
+    checklist_resolved,
     generate_jd,
     publish_edit,
     publish_job,
@@ -358,6 +360,54 @@ def generate_session(session_id: str, user: dict = Depends(get_current_recruiter
             status_code=400,
             detail="A few more details are needed before generating — experience, location, work mode, and employment type.",
         )
+
+    result = generate_jd(state, config)
+    graph.update_state(config, result)
+
+    final_state = graph.get_state(config).values
+    return _to_response(session_id, final_state)
+
+
+@router.post("/{session_id}/confirm-generate", response_model=ChatResponse)
+def confirm_and_generate(session_id: str, user: dict = Depends(get_current_recruiter)) -> ChatResponse:
+    """The "Generate JD" chip shown alongside the FINAL CLOSING CHECK question calls this instead
+    of sending a normal chat message — clicking that specific chip already IS the recruiter's
+    unambiguous confirmation that they're ready, so this sets closing_check_confirmed directly
+    (deterministic, no LLM call needed to interpret a literal button click) and generates in the
+    same request, rather than a two-step "send a chat message, hope the model reads it as ready,
+    then separately press Generate" round trip. Still enforces the same checklist guard /generate
+    does — this click only ever implies the closing-check-confirmation half of ready_to_generate(),
+    never a substitute for the checklist itself actually being resolved.
+    """
+    _authorize_session(session_id, user)
+
+    graph = get_compiled_graph()
+    config = {"configurable": {"thread_id": session_id, "company_id": user["company_id"], "user_id": user["id"]}}
+    state = graph.get_state(config).values
+    if not state:
+        raise HTTPException(status_code=404, detail="No conversation found for this session_id")
+
+    job_state = state.get("job_state") or {}
+    if not hard_floor_met(job_state):
+        raise HTTPException(
+            status_code=400,
+            detail="Add at least a job title and one required skill or responsibility before generating.",
+        )
+    skipped = set(state.get("skipped_checklist_fields") or [])
+    if not checklist_resolved(job_state, skipped):
+        raise HTTPException(
+            status_code=400,
+            detail="A few more details are needed before generating.",
+        )
+
+    graph.update_state(
+        config,
+        {
+            "closing_check_confirmed": True,
+            "messages": [HumanMessage(content=_CLOSING_CHECK_READY_OPTION)],
+        },
+    )
+    state = graph.get_state(config).values
 
     result = generate_jd(state, config)
     graph.update_state(config, result)

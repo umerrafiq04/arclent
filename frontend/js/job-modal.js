@@ -19,6 +19,9 @@
   const draftForm = document.getElementById("jm-draft-form");
 
   const STORAGE_KEY = "recruiter_active_job_session";
+  // Mirrors backend/agent/nodes.py's _CLOSING_CHECK_READY_OPTION — the one chip label that means
+  // "confirm + generate" instead of a normal chat message (see confirmAndGenerate below).
+  const GENERATE_JD_CHIP_LABEL = "Generate JD";
 
   let sessionId = null;
   let currentPhase = null;
@@ -66,7 +69,14 @@
         chip.textContent = opt;
         chip.addEventListener("click", () => {
           row.querySelectorAll(".jm-chip").forEach((c) => (c.disabled = true));
-          sendMessage(opt);
+          // This one chip means "confirm I'm ready AND generate" — a direct action, not a normal
+          // chat message (see confirmAndGenerate: generation only ever happens via a direct
+          // endpoint call, never as a side effect of something the LLM merely read as "ready").
+          if (opt === GENERATE_JD_CHIP_LABEL) {
+            confirmAndGenerate();
+          } else {
+            sendMessage(opt);
+          }
         });
         row.appendChild(chip);
       });
@@ -119,6 +129,106 @@
     afterRow.insertAdjacentElement("afterend", hint);
     messageList.scrollTop = messageList.scrollHeight;
     return hint;
+  }
+
+  // The generated/refined JD itself, shown right in the chat (not just the side panel) — a
+  // compact summary, not the full multi-section document (that stays in the draft panel, which
+  // also has the actual field-level editing controls). m.jd_document is the JobDescriptionDraft
+  // dict; m.content is always empty for this message (see _jd_document_message in nodes.py).
+  function appendJdCard(m) {
+    const row = document.createElement("div");
+    row.className = "message-row ai";
+    row.appendChild(avatarEl());
+
+    const card = document.createElement("div");
+    card.className = "jm-jd-card";
+
+    const jd = m.jd_document || {};
+    const title = document.createElement("div");
+    title.className = "jm-jd-card-title";
+    title.textContent = jd.job_title || "Job Description";
+    card.appendChild(title);
+
+    const meta = [jd.employment_type, jd.work_mode, jd.location].filter(Boolean).join("  ·  ");
+    if (meta) {
+      const metaEl = document.createElement("div");
+      metaEl.className = "jm-jd-card-meta";
+      metaEl.textContent = meta;
+      card.appendChild(metaEl);
+    }
+
+    const summary = jd.job_summary || jd.about_role || "";
+    if (summary) {
+      const summaryEl = document.createElement("p");
+      summaryEl.className = "jm-jd-card-summary";
+      summaryEl.textContent = summary;
+      card.appendChild(summaryEl);
+    }
+
+    if (jd.major_accountabilities && jd.major_accountabilities.length) {
+      const list = document.createElement("ul");
+      list.className = "jm-jd-card-list";
+      jd.major_accountabilities.slice(0, 3).forEach((item) => {
+        const li = document.createElement("li");
+        li.textContent = item;
+        list.appendChild(li);
+      });
+      card.appendChild(list);
+    }
+
+    const hint = document.createElement("div");
+    hint.className = "jm-jd-card-hint";
+    hint.textContent = "Full details & editing are in the panel on the right →";
+    card.appendChild(hint);
+
+    row.appendChild(card);
+    messageList.appendChild(row);
+    messageList.scrollTop = messageList.scrollHeight;
+    return row;
+  }
+
+  // Only attached after the MOST RECENT jd_document message — a JD earlier in the history (e.g.
+  // before a Regenerate) is superseded, and re-offering these actions on it would be confusing.
+  function appendJdActionChips(afterRow) {
+    const row = document.createElement("div");
+    row.className = "jm-chip-row";
+
+    const regenChip = document.createElement("button");
+    regenChip.type = "button";
+    regenChip.className = "jm-chip";
+    regenChip.textContent = "Regenerate";
+    regenChip.addEventListener("click", async () => {
+      row.querySelectorAll(".jm-chip").forEach((c) => (c.disabled = true));
+      await generateNow(null, true);
+    });
+    row.appendChild(regenChip);
+
+    const changesChip = document.createElement("button");
+    changesChip.type = "button";
+    changesChip.className = "jm-chip";
+    changesChip.textContent = "Make Changes";
+    changesChip.addEventListener("click", () => {
+      // Not a network action — refining the JD already works by just describing the change in
+      // the box below (see REQUEST_REFINEMENT in prompts.py), so this chip only draws attention
+      // to that rather than sending a vague placeholder message on the recruiter's behalf.
+      chatInput.focus();
+      chatInput.placeholder = "Describe what you'd like to change…";
+    });
+    row.appendChild(changesChip);
+
+    const goodChip = document.createElement("button");
+    goodChip.type = "button";
+    goodChip.className = "jm-chip";
+    goodChip.textContent = "Looks Good";
+    goodChip.addEventListener("click", async () => {
+      row.querySelectorAll(".jm-chip").forEach((c) => (c.disabled = true));
+      await sendMessage("Looks good!");
+    });
+    row.appendChild(goodChip);
+
+    afterRow.insertAdjacentElement("afterend", row);
+    messageList.scrollTop = messageList.scrollHeight;
+    appendTypeHint(row);
   }
 
   // The backend only ever sets asking_about_field when its latest reply is a live question
@@ -232,15 +342,36 @@
       return;
     }
     let lastAiRow = null;
+    let lastJdRow = null;
     messages.forEach((m) => {
-      if (m.jd_document) return; // JD content lives in the draft pane, not the chat, here
+      if (m.jd_document) {
+        lastJdRow = appendJdCard(m);
+        lastAiRow = lastJdRow;
+        return;
+      }
       const row = appendMessage(m.role, m.content);
       if (m.role !== "user") lastAiRow = row;
     });
     if (!lastAiRow) return;
+
+    // A JD card as the very last thing in the conversation gets its own follow-up actions
+    // (Regenerate/Make Changes/Looks Good) instead of the normal checklist-question chip/Skip
+    // treatment below — the two never both apply to the same turn.
+    const lastMessage = messages[messages.length - 1];
+    if (lastMessage && lastMessage.jd_document) {
+      appendJdActionChips(lastJdRow);
+      return;
+    }
+
     let insertAfter = lastAiRow;
-    if (suggestedOptions && suggestedOptions.length) {
+    const hasChips = suggestedOptions && suggestedOptions.length;
+    if (hasChips) {
       insertAfter = appendChips(lastAiRow, suggestedOptions, multiSelect) || lastAiRow;
+    }
+    // The hint belongs whenever there's anything tappable to contrast it with — real chips, or
+    // just the dedicated Skip button on its own (e.g. a question whose only "chip" would have
+    // been a redundant second Skip, suppressed on the backend — see apply_updates in nodes.py).
+    if (hasChips || askingAboutField) {
       insertAfter = appendTypeHint(insertAfter) || insertAfter;
     }
     if (askingAboutField) {
@@ -620,11 +751,17 @@
   // of a chat message (see the backend's REQUEST_JD_GENERATION guidance: chat can acknowledge
   // and point here, but never generates itself). No fake "please generate" user bubble is added
   // — just a processing indicator while the call is in flight, then the result.
+  // `button` is optional — the in-chat "Regenerate" chip triggers the exact same call but has no
+  // persistent button element of its own to manage (the chip row already disables itself the
+  // normal chip way), so every button.* touch below is guarded.
   async function generateNow(button, isRegenerate) {
     clearError();
-    button.disabled = true;
-    const originalText = button.textContent;
-    button.textContent = isRegenerate ? "Regenerating…" : "Generating…";
+    let originalText;
+    if (button) {
+      button.disabled = true;
+      originalText = button.textContent;
+      button.textContent = isRegenerate ? "Regenerating…" : "Generating…";
+    }
     showProcessingStatus(isRegenerate ? "Regenerating your job description..." : "Creating your job description...");
     try {
       const data = await api.generateJd(sessionId);
@@ -637,8 +774,30 @@
     } catch (err) {
       hideProcessingStatus();
       showError(err.message || "Couldn't generate the job description. Please try again.");
-      button.disabled = false;
-      button.textContent = originalText;
+      if (button) {
+        button.disabled = false;
+        button.textContent = originalText;
+      }
+    }
+  }
+
+  // What the "Generate JD" chip calls — confirms the closing check AND generates in one direct,
+  // non-chat request (see confirm-generate in routes/chat.py). Chip disabling/re-enabling on
+  // error is handled by the caller (the click handler in appendChips), same as every other chip.
+  async function confirmAndGenerate() {
+    clearError();
+    showProcessingStatus("Creating your job description...");
+    try {
+      const data = await api.confirmGenerateJd(sessionId);
+      hideProcessingStatus();
+      currentData = data;
+      currentPhase = data.phase;
+      renderMessages(data.messages, data.suggested_options, data.options_multi_select, data.asking_about_field);
+      renderDraftForm(data);
+      updateStatusBar(data);
+    } catch (err) {
+      hideProcessingStatus();
+      showError(err.message || "Couldn't generate the job description. Please try again.");
     }
   }
 

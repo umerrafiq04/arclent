@@ -151,6 +151,108 @@ def analyze_turn(state: GraphState) -> dict:
         }
 
     updates: dict = {}
+    previous_asking_about_field = state.get("asking_about_field")
+
+    # Catch an obvious fat-finger/misread before it's silently stored — e.g. a recruiter meaning
+    # "2-3 years" landing as "223" years of experience. Checked against the RAW recruiter reply,
+    # not analysis.field_updates: verified live that the model sometimes "helpfully" normalizes an
+    # implausible number into something plausible-looking on its own ("223" -> "2-3 years") and
+    # just moves on to the next question — which hides the exact problem instead of solving it,
+    # since the recruiter never gets a chance to confirm what they actually meant. Only fires when
+    # the PREVIOUS turn was genuinely asking about experience, so an unrelated number elsewhere in
+    # a message (a salary figure, a year, anything) is never second-guessed. A generous ceiling,
+    # not a strict range check, so real answers like "10+ years" or "15 years" for a senior role
+    # are never flagged. Must happen here, in analyze_turn, not apply_updates — the AIMessage this
+    # turn's response becomes is already committed to the transcript by the time apply_updates
+    # runs, so this is the only point where the reply text itself can still be changed to ask for
+    # clarification instead.
+    implausible_value_caught = False
+    if previous_asking_about_field == "experience":
+        last_human_text = ""
+        for m in reversed(state.get("messages") or []):
+            if isinstance(m, HumanMessage):
+                last_human_text = (m.content or "").strip()
+                break
+        raw_numbers = re.findall(r"\d+", last_human_text)
+        if raw_numbers and max(int(n) for n in raw_numbers) > _MAX_PLAUSIBLE_EXPERIENCE_YEARS:
+            implausible_value_caught = True
+            new_field_updates = dict(analysis.field_updates or {})
+            new_field_updates.pop("experience", None)
+            analysis = analysis.model_copy(
+                update={
+                    "field_updates": new_field_updates,
+                    "response": (
+                        f'"{last_human_text}" doesn\'t look like a realistic years-of-experience value — '
+                        "could you double check that? For example, 2-3 years, 5 years, or 10+ years."
+                    ),
+                    "asking_about_field": "experience",
+                    "suggested_options": _DEFAULT_OPTIONS_BY_FIELD["experience"],
+                    "options_multi_select": False,
+                    "enough_information": False,
+                }
+            )
+
+    # A standard-checklist (or skills-family) question that gets asked twice in a row without
+    # resolving — the model re-asks near-verbatim instead of recognizing a decline like "I don't
+    # want to mention salary", or two different unclear replies land in a row — must never become a
+    # 3rd ask. Verified live: the model can loop on an identical question after a free-text decline
+    # it failed to recognize. Detect via TEXT similarity to the bot's own last message (a genuinely
+    # new question is never near-identical to the one right before it) rather than relying on the
+    # model to have correctly re-set asking_about_field — same "cap repeated asks deterministically,
+    # don't trust the model to stop on its own" philosophy as _SKILLS_FOLLOWUP_CAP below. Skipped
+    # entirely when the implausible-value check above just fired: THAT block deliberately re-asks
+    # the same field on purpose (to confirm a suspicious value), which looks identical to a stall
+    # from here — without this guard the two overrides fight each other and the implausible-value
+    # catch gets silently undone the instant it fires (verified live).
+    last_ai_text = None
+    for m in reversed(state.get("messages") or []):
+        if isinstance(m, AIMessage):
+            last_ai_text = (m.content or "").strip()
+            break
+    response_text_now = (analysis.response or "").strip()
+    repeated_same_field = bool(
+        analysis.asking_about_field
+        and previous_asking_about_field
+        and analysis.asking_about_field == previous_asking_about_field
+    )
+    repeated_verbatim = bool(last_ai_text) and bool(response_text_now) and response_text_now == last_ai_text
+    stalled_field = previous_asking_about_field if (repeated_same_field or repeated_verbatim) else None
+
+    if stalled_field and stalled_field in OPTIONAL_SKIPPABLE_FIELDS and not implausible_value_caught:
+        prospective_job_state = apply_field_changes(
+            state.get("job_state") or {},
+            analysis.field_updates,
+            [op.model_dump() for op in analysis.list_operations],
+        )
+        floor_would_break = stalled_field in ("required_skills", "responsibilities") and not hard_floor_met(
+            prospective_job_state
+        )
+        if not prospective_job_state.get(stalled_field) and not floor_would_break:
+            skipped = set(state.get("skipped_checklist_fields") or [])
+            skipped.add(stalled_field)
+            next_field = _next_checklist_prompt(prospective_job_state, skipped)
+            if next_field:
+                question, field, chips = next_field
+                analysis = analysis.model_copy(
+                    update={
+                        "response": f"No worries, we'll leave that out. {question}",
+                        "asking_about_field": field,
+                        "suggested_options": chips,
+                        "options_multi_select": False,
+                        "enough_information": False,
+                    }
+                )
+            else:
+                analysis = analysis.model_copy(
+                    update={
+                        "response": _READY_TO_GENERATE_RESPONSE,
+                        "asking_about_field": None,
+                        "suggested_options": [],
+                        "options_multi_select": False,
+                        "enough_information": True,
+                    }
+                )
+            updates["skipped_checklist_fields"] = list(skipped)
 
     # Deterministic interpretation of a closing-check reply when it's an EXACT chip click — never
     # trust the model's own reading here even with the clearer chip wording (see FINAL CLOSING
@@ -230,9 +332,10 @@ def analyze_turn(state: GraphState) -> dict:
     # what lets the exact-match reply interpretation above work at all — a spontaneously-worded pair
     # from the model can't be reliably matched there.
     response_lower_now = (analysis.response or "").lower()
-    looks_like_closing_check = "?" in response_lower_now and (
-        "anything else" in response_lower_now
-        or ("ready" in response_lower_now and "generate" in response_lower_now)
+    looks_like_closing_check = (
+        "?" in response_lower_now
+        and "generate" in response_lower_now
+        and ("add more" in response_lower_now or "anything else" in response_lower_now or "ready" in response_lower_now)
     )
     if analysis.enough_information or looks_like_closing_check:
         prospective_job_state = apply_field_changes(
@@ -336,6 +439,11 @@ _DEFAULT_OPTIONS_BY_FIELD = {
 # 4th+ skill-flavored question — an actual runaway loop — should ever hit this cap.
 _SKILLS_FOLLOWUP_CAP = 3
 
+# A generous ceiling, not a strict range — only meant to catch an obvious fat-finger/misread (a
+# recruiter meaning "2-3 years" landing as "223") before it's silently stored as job_state. Real
+# postings asking for up to a few decades of experience should never be second-guessed.
+_MAX_PLAUSIBLE_EXPERIENCE_YEARS = 50
+
 _CHECKLIST_ORDER = [
     "required_skills",
     "responsibilities",
@@ -358,16 +466,21 @@ _CHECKLIST_QUESTIONS = {
     "education": "What's the minimum education level for this role, if any?",
     "salary": "What's the salary range for this role, if you'd like to share one?",
 }
+# Empty, not ["Skip"], for the four fields with no other canonical answer set: every caller of
+# _next_checklist_prompt (the skills-cap override, _fallback_turn_analysis, and the /skip-field
+# endpoint) also sets asking_about_field to this same field, which already renders a dedicated
+# "Skip this" button — a chip whose ONLY content is a second, differently-styled "Skip" duplicates
+# that button rather than adding a real option (reported live as a confusing double affordance).
 _CHECKLIST_CHIPS = {
-    "required_skills": ["Skip"],
-    "responsibilities": ["Skip"],
-    "preferred_skills": ["Skip"],
+    "required_skills": [],
+    "responsibilities": [],
+    "preferred_skills": [],
     "experience": _DEFAULT_OPTIONS_BY_FIELD["experience"],
     "location": ["Worldwide", "New York", "London", "Bangalore"],
     "work_mode": _DEFAULT_OPTIONS_BY_FIELD["work_mode"],
     "employment_type": _DEFAULT_OPTIONS_BY_FIELD["employment_type"],
     "education": _DEFAULT_OPTIONS_BY_FIELD["education"],
-    "salary": ["Skip"],
+    "salary": [],
 }
 _READY_TO_GENERATE_RESPONSE = (
     'Everything\'s captured for this role! Click "Generate Full Description" in the panel on the '
@@ -380,12 +493,9 @@ _READY_TO_GENERATE_RESPONSE = (
 # captured" without ever asking this) and so a chip click on it can be interpreted deterministically
 # rather than trusting the model to read "Not yet, I have more to add" correctly every time. Keep
 # these three strings in sync with the FINAL CLOSING CHECK section of SYSTEM_PROMPT_TEMPLATE.
-_CLOSING_CHECK_RESPONSE = (
-    "That covers everything I need — is there anything else you'd like to add before we finalize "
-    "this, or are you ready to generate the description?"
-)
-_CLOSING_CHECK_READY_OPTION = "I'm ready, let's generate"
-_CLOSING_CHECK_MORE_OPTION = "Not yet, I have more to add"
+_CLOSING_CHECK_RESPONSE = "Would you like to add more, or shall I generate the job description?"
+_CLOSING_CHECK_READY_OPTION = "Generate JD"
+_CLOSING_CHECK_MORE_OPTION = "Add More"
 _CLOSING_CHECK_OPTIONS = [_CLOSING_CHECK_READY_OPTION, _CLOSING_CHECK_MORE_OPTION]
 
 
@@ -725,6 +835,15 @@ def apply_updates(state: GraphState, config: RunnableConfig) -> dict:
         # to a generic pair as an absolute last resort.
         suggested_options = _DEFAULT_OPTIONS_BY_FIELD.get(asking_about_field, _GENERIC_FALLBACK_OPTIONS)
         options_multi_select = False
+
+    # A dedicated "Skip this" button already renders in the UI whenever asking_about_field is set
+    # (see appendSkipButton in job-modal.js) — a suggested_options chip whose ONLY content is the
+    # same generic "Skip" fallback adds nothing but a confusing second, differently-styled skip
+    # affordance stacked on the same question (reported live). Suppress it in that specific case;
+    # any OTHER chip content (real answer options like work_mode's Remote/Hybrid/Onsite) still
+    # renders normally alongside the dedicated button, since those aren't redundant with it.
+    if asking_about_field and suggested_options == _GENERIC_FALLBACK_OPTIONS:
+        suggested_options = []
 
     return {
         "job_state": job_state,
