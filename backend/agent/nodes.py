@@ -403,6 +403,32 @@ def analyze_turn(state: GraphState) -> dict:
         ("generate" in response_lower_now and ("add more" in response_lower_now or "anything else" in response_lower_now or "ready" in response_lower_now))
         or (already_past_closing_check and ("anything else" in response_lower_now or "add more" in response_lower_now or "add anything" in response_lower_now))
     )
+    # A DECLARATIVE "you're ready" announcement (no question mark at all) is just as real a miss —
+    # verified live: "Everything's captured for this role, Alex — click 'Generate Full Description'
+    # in the panel on the right whenever you're ready!" sailed straight through with
+    # enough_information left false and no chip, because it never posed a question and the model's
+    # own enough_information flag didn't match what the text was actually saying. The Generate
+    # button being correctly disabled at that exact moment (ready_to_generate() never trusts this
+    # text either) only made it worse — the recruiter was told to click something that didn't work
+    # yet, with no chip offering the one thing that actually would. Catching this text pattern
+    # regardless of punctuation is what routes it into the SAME closing-check/ready normalization
+    # below instead of passing the model's inconsistent statement straight through.
+    looks_like_ready_statement = any(
+        phrase in response_lower_now
+        for phrase in (
+            "everything's captured",
+            "everything is captured",
+            "generate full description",
+            "generate the full description",
+            "generate the job description",
+            "ready to generate",
+            "ready to draft",
+            "click generate",
+            "click 'generate",
+            'click "generate',
+        )
+    )
+    looks_like_closing_check = looks_like_closing_check or looks_like_ready_statement
     if analysis.enough_information or looks_like_closing_check:
         prospective_job_state = apply_field_changes(
             state.get("job_state") or {},
@@ -467,18 +493,22 @@ def analyze_turn(state: GraphState) -> dict:
                     }
                 )
                 updates["closing_check_asked"] = True
-            elif next_field is None and already_past_closing_check:
-                # Checklist complete AND the one-time closing check already ran earlier in this
-                # conversation — ANY turn that reaches here (whether the model declared
-                # enough_information=true, or just asked its own not-supposed-to-happen "anything
-                # else?" follow-up) gets forced to our canonical "ready to generate" text + the
-                # "Generate JD" chip, unconditionally. Never trust the model's own phrasing or
-                # judgment for this specific moment: verified live that several different paths
-                # (the skills-loop-cap fallback, the stalled-field fallback, and the model just
-                # asking its own wrap-up question again) can all land here, and without a single,
-                # unconditional normalizer, whichever one fired last could leave the recruiter with
-                # an inconsistent or chip-less message — the exact reported bug (chip sometimes
-                # shown, sometimes not, depending on which turn happened to trigger it).
+            elif next_field is None and (already_past_closing_check or analysis.intent == Intent.FINISH_COLLECTING):
+                # Checklist complete AND (the one-time closing check already ran earlier in this
+                # conversation, OR the recruiter just gave an explicit finish phrase — which always
+                # means "ready" regardless of whether the ceremonial closing check ever actually
+                # fired, e.g. if an earlier turn's "ready" announcement failed to trigger it, same
+                # bug this whole block exists to catch). ANY turn that reaches here (whether the
+                # model declared enough_information=true, or just asked its own
+                # not-supposed-to-happen "anything else?" follow-up) gets forced to our canonical
+                # "ready to generate" text + the "Generate JD" chip, unconditionally. Never trust
+                # the model's own phrasing or judgment for this specific moment: verified live that
+                # several different paths (the skills-loop-cap fallback, the stalled-field fallback,
+                # and the model just asking its own wrap-up question again) can all land here, and
+                # without a single, unconditional normalizer, whichever one fired last could leave
+                # the recruiter with an inconsistent or chip-less message — the exact reported bug
+                # (chip sometimes shown, sometimes not, depending on which turn happened to trigger
+                # it).
                 analysis = analysis.model_copy(
                     update={
                         "response": _READY_TO_GENERATE_RESPONSE,
