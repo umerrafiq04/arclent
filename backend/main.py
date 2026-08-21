@@ -84,6 +84,22 @@ app.include_router(jobs.router)
 app.include_router(jobs.public_router)
 app.include_router(admin.router)
 
+class NoCacheStaticFiles(StaticFiles):
+    """Plain StaticFiles sets Last-Modified/ETag but no Cache-Control at all — browsers then apply
+    their own (often long) heuristic caching, with no header telling them to check back. Confirmed
+    live: a JS fix was already deployed and serving correctly, but a browser kept rendering an old
+    cached copy with nothing prompting it to re-fetch. "no-cache" doesn't mean "don't cache" — it
+    means "always revalidate with the server first," a cheap conditional GET against the ETag this
+    class already sets, so an unchanged file still avoids a full re-download but a changed one is
+    never silently missed again.
+    """
+
+    def file_response(self, *args, **kwargs):
+        response = super().file_response(*args, **kwargs)
+        response.headers["Cache-Control"] = "no-cache"
+        return response
+
+
 FRONTEND_DIR = Path(__file__).resolve().parent.parent / "frontend"
 
 
@@ -98,4 +114,4 @@ def root() -> RedirectResponse:
 
 
 if FRONTEND_DIR.exists():
-    app.mount("/", StaticFiles(directory=str(FRONTEND_DIR), html=True), name="frontend")
+    app.mount("/", NoCacheStaticFiles(directory=str(FRONTEND_DIR), html=True), name="frontend")
