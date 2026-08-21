@@ -68,6 +68,35 @@ def _strip_markdown(value):
     return value
 
 
+_JD_DEDUPE_PRIORITY_FIELDS = ["required_skills", "minimum_requirements", "preferred_qualifications", "stand_out"]
+
+
+def _dedupe_jd_lists(jd: dict) -> dict:
+    """The same skill/tool can end up listed in more than one section (e.g. "React" in both
+    required_skills and preferred_qualifications) despite explicit prompt instructions not to —
+    verified this is a realistic model slip, not just a theoretical one, so strip it deterministically
+    rather than rely on prompt compliance alone (same principle as _strip_markdown above). Priority
+    order (highest wins, an exact repeat gets removed from every LOWER section):
+    required_skills > minimum_requirements > preferred_qualifications > stand_out. Case-insensitive
+    EXACT string match only — "React" and "React Native" are different skills and both stay.
+    """
+    seen_lower: set[str] = set()
+    result = dict(jd)
+    for field in _JD_DEDUPE_PRIORITY_FIELDS:
+        items = result.get(field) or []
+        if not isinstance(items, list):
+            continue
+        deduped = []
+        for item in items:
+            key = item.strip().lower() if isinstance(item, str) else item
+            if key in seen_lower:
+                continue
+            seen_lower.add(key)
+            deduped.append(item)
+        result[field] = deduped
+    return result
+
+
 def _job_state_from_record(record: dict) -> dict:
     return {
         "job_title": record.get("job_title"),
@@ -153,6 +182,41 @@ def analyze_turn(state: GraphState) -> dict:
     updates: dict = {}
     previous_asking_about_field = state.get("asking_about_field")
 
+    last_human_text = ""
+    for m in reversed(state.get("messages") or []):
+        if isinstance(m, HumanMessage):
+            last_human_text = (m.content or "").strip()
+            break
+
+    # Catch an internally-contradictory experience statement before anything else — "fresher"
+    # (implying little-to-no prior experience) stated alongside a genuine multi-year figure in the
+    # SAME message (e.g. "hire a fresher with 5 years of exp") is logically inconsistent. Verified
+    # live: the model just accepted this as-is, storing 5 years without ever noticing the conflict.
+    # Runs on EVERY turn (not gated to "was the last question about experience") since this can — and
+    # in the reported case did — show up in the very first message, before experience was ever asked
+    # about at all.
+    implausible_value_caught = False
+    fresher_contradiction = _find_fresher_experience_contradiction(last_human_text)
+    if fresher_contradiction:
+        implausible_value_caught = True
+        fresher_phrase, experience_phrase = fresher_contradiction
+        new_field_updates = dict(analysis.field_updates or {})
+        new_field_updates.pop("experience", None)
+        analysis = analysis.model_copy(
+            update={
+                "field_updates": new_field_updates,
+                "response": (
+                    f'Quick check — you mentioned "{fresher_phrase}" but also "{experience_phrase}", '
+                    "which don't quite line up (a fresher usually means little to no prior "
+                    "experience). Which did you mean for this role?"
+                ),
+                "asking_about_field": "experience",
+                "suggested_options": _DEFAULT_OPTIONS_BY_FIELD["experience"],
+                "options_multi_select": False,
+                "enough_information": False,
+            }
+        )
+
     # Catch an obvious fat-finger/misread before it's silently stored — e.g. a recruiter meaning
     # "2-3 years" landing as "223" years of experience. Checked against the RAW recruiter reply,
     # not analysis.field_updates: verified live that the model sometimes "helpfully" normalizes an
@@ -166,13 +230,7 @@ def analyze_turn(state: GraphState) -> dict:
     # turn's response becomes is already committed to the transcript by the time apply_updates
     # runs, so this is the only point where the reply text itself can still be changed to ask for
     # clarification instead.
-    implausible_value_caught = False
-    if previous_asking_about_field == "experience":
-        last_human_text = ""
-        for m in reversed(state.get("messages") or []):
-            if isinstance(m, HumanMessage):
-                last_human_text = (m.content or "").strip()
-                break
+    if not implausible_value_caught and previous_asking_about_field == "experience":
         raw_numbers = re.findall(r"\d+", last_human_text)
         if raw_numbers and max(int(n) for n in raw_numbers) > _MAX_PLAUSIBLE_EXPERIENCE_YEARS:
             implausible_value_caught = True
@@ -247,7 +305,7 @@ def analyze_turn(state: GraphState) -> dict:
                     update={
                         "response": _READY_TO_GENERATE_RESPONSE,
                         "asking_about_field": None,
-                        "suggested_options": [],
+                        "suggested_options": _READY_TO_GENERATE_OPTIONS,
                         "options_multi_select": False,
                         "enough_information": True,
                     }
@@ -310,7 +368,7 @@ def analyze_turn(state: GraphState) -> dict:
                     update={
                         "response": _READY_TO_GENERATE_RESPONSE,
                         "asking_about_field": None,
-                        "suggested_options": [],
+                        "suggested_options": _READY_TO_GENERATE_OPTIONS,
                         "options_multi_select": False,
                         "enough_information": True,
                     }
@@ -332,10 +390,18 @@ def analyze_turn(state: GraphState) -> dict:
     # what lets the exact-match reply interpretation above work at all — a spontaneously-worded pair
     # from the model can't be reliably matched there.
     response_lower_now = (analysis.response or "").lower()
-    looks_like_closing_check = (
-        "?" in response_lower_now
-        and "generate" in response_lower_now
-        and ("add more" in response_lower_now or "anything else" in response_lower_now or "ready" in response_lower_now)
+    already_past_closing_check = bool(state.get("closing_check_asked"))
+    # Before the one-time closing check has happened, only a wrap-up question that explicitly
+    # mentions generating counts — a vague "anything else?" earlier in collection (e.g. mid a
+    # skills follow-up) is legitimate and must not be swept in here. AFTER it's already happened,
+    # widen the net: the ONE-TIME rule (see FINAL CLOSING CHECK in prompts.py) means the model is
+    # never supposed to ask another wrap-up-shaped question at all past that point — verified live
+    # it sometimes does anyway (e.g. after "Add More" + new details: "Got it, noted! ... Anything
+    # else you'd like to add?" with its own ad-hoc ["That's all", "Add more"] pair) — so ANY
+    # "anything else?"/"add more?" phrasing at that stage is presumed to be exactly that violation.
+    looks_like_closing_check = "?" in response_lower_now and (
+        ("generate" in response_lower_now and ("add more" in response_lower_now or "anything else" in response_lower_now or "ready" in response_lower_now))
+        or (already_past_closing_check and ("anything else" in response_lower_now or "add more" in response_lower_now or "add anything" in response_lower_now))
     )
     if analysis.enough_information or looks_like_closing_check:
         prospective_job_state = apply_field_changes(
@@ -360,6 +426,31 @@ def analyze_turn(state: GraphState) -> dict:
                         "enough_information": False,
                     }
                 )
+            elif (
+                next_field is None
+                and not _company_context_present(state.get("company_profile") or {}, prospective_job_state)
+                and not state.get("company_context_check_asked")
+                and analysis.intent != Intent.FINISH_COLLECTING
+            ):
+                # Checklist done, but there's genuinely no company narrative context anywhere
+                # (neither the company profile nor a job-specific override) — ask ONCE, before the
+                # closing check, rather than silently generating a generic-sounding JD and later
+                # telling the recruiter "nothing is missing" if they ask (see COMPANY CONTEXT CHECK
+                # in prompts.py — verified live the model reliably skips this prompt-only guidance
+                # on its own, same "don't trust prompt compliance alone" lesson as everywhere else
+                # in this function). No suggested_options here — this is open-ended (there's no
+                # small fixed answer set the way work_mode/experience have), so just the dedicated
+                # Skip button plus free text, same pattern as the skills-family fields' fallback.
+                analysis = analysis.model_copy(
+                    update={
+                        "response": _COMPANY_CONTEXT_CHECK_RESPONSE,
+                        "asking_about_field": "company_context",
+                        "suggested_options": [],
+                        "options_multi_select": False,
+                        "enough_information": False,
+                    }
+                )
+                updates["company_context_check_asked"] = True
             elif next_field is None and not state.get("closing_check_asked") and analysis.intent != Intent.FINISH_COLLECTING:
                 # Checklist is genuinely complete and the closing check hasn't run yet — ask it with
                 # OUR wording, whether the model tried to skip it outright or just phrased its own
@@ -376,6 +467,27 @@ def analyze_turn(state: GraphState) -> dict:
                     }
                 )
                 updates["closing_check_asked"] = True
+            elif next_field is None and already_past_closing_check:
+                # Checklist complete AND the one-time closing check already ran earlier in this
+                # conversation — ANY turn that reaches here (whether the model declared
+                # enough_information=true, or just asked its own not-supposed-to-happen "anything
+                # else?" follow-up) gets forced to our canonical "ready to generate" text + the
+                # "Generate JD" chip, unconditionally. Never trust the model's own phrasing or
+                # judgment for this specific moment: verified live that several different paths
+                # (the skills-loop-cap fallback, the stalled-field fallback, and the model just
+                # asking its own wrap-up question again) can all land here, and without a single,
+                # unconditional normalizer, whichever one fired last could leave the recruiter with
+                # an inconsistent or chip-less message — the exact reported bug (chip sometimes
+                # shown, sometimes not, depending on which turn happened to trigger it).
+                analysis = analysis.model_copy(
+                    update={
+                        "response": _READY_TO_GENERATE_RESPONSE,
+                        "asking_about_field": None,
+                        "suggested_options": _READY_TO_GENERATE_OPTIONS,
+                        "options_multi_select": False,
+                        "enough_information": True,
+                    }
+                )
 
     clean_response = _strip_markdown(analysis.response)
     dumped = analysis.model_dump(mode="json")
@@ -493,6 +605,37 @@ def _extract_fact_backstop(text: str) -> dict:
     return found
 
 
+# "Fresher" (and equivalents) means little-to-no prior professional experience — a message that
+# also states a real years-of-experience figure alongside it is self-contradictory (e.g. "hire a
+# fresher with 5 years of experience"). 0-1 years is still consistent with "fresher"; 2+ is not.
+_FRESHER_RE = re.compile(r"\bfresher(?:s)?\b|\bfresh\s+graduate\b|\bentry[- ]level\b|\bno\s+(?:prior\s+)?experience\b", re.IGNORECASE)
+_FRESHER_CONTRADICTION_MIN_YEARS = 2
+
+
+def _find_fresher_experience_contradiction(text: str) -> tuple[str, str] | None:
+    """Returns (fresher_phrase, experience_phrase) if the RAW recruiter text states both "fresher"
+    (or an equivalent) and a genuine multi-year experience figure in the same message — an
+    internal contradiction worth confirming rather than silently picking one side (verified live:
+    the model just accepted "fresher with 5 years of exp" as-is without noticing the conflict).
+    Returns None when there's no fresher mention, no experience figure, or the figure is small
+    enough to still be consistent with "fresher" (0-1 years).
+    """
+    if not text:
+        return None
+    fresher_match = _FRESHER_RE.search(text)
+    if not fresher_match:
+        return None
+    range_match = _EXPERIENCE_RANGE_RE.search(text)
+    if range_match:
+        if int(range_match.group(1)) >= _FRESHER_CONTRADICTION_MIN_YEARS:
+            return fresher_match.group(0), range_match.group(0)
+        return None
+    single_match = _EXPERIENCE_SINGLE_RE.search(text)
+    if single_match and int(single_match.group(1)) >= _FRESHER_CONTRADICTION_MIN_YEARS:
+        return fresher_match.group(0), single_match.group(0)
+    return None
+
+
 _CHECKLIST_ORDER = [
     "required_skills",
     "responsibilities",
@@ -531,11 +674,6 @@ _CHECKLIST_CHIPS = {
     "education": _DEFAULT_OPTIONS_BY_FIELD["education"],
     "salary": [],
 }
-_READY_TO_GENERATE_RESPONSE = (
-    'Everything\'s captured for this role! Click "Generate Full Description" in the panel on the '
-    "right whenever you're ready."
-)
-
 # The FINAL CLOSING CHECK question from prompts.py, mirrored here so analyze_turn can ask it
 # deterministically when the model skips straight past it (verified live: the model reliably walks
 # the checklist far enough to satisfy the hard floor, then jumps straight to "Everything's
@@ -546,6 +684,40 @@ _CLOSING_CHECK_RESPONSE = "Would you like to add more, or shall I generate the j
 _CLOSING_CHECK_READY_OPTION = "Generate JD"
 _CLOSING_CHECK_MORE_OPTION = "Add More"
 _CLOSING_CHECK_OPTIONS = [_CLOSING_CHECK_READY_OPTION, _CLOSING_CHECK_MORE_OPTION]
+
+# Every OTHER "the checklist is done" announcement (the skills-loop-cap fallback, the stalled-field
+# fallback, _fallback_turn_analysis, and /skip-field's own final branch) — i.e. every such moment
+# that ISN'T the one-time FINAL CLOSING CHECK question itself. Verified live this was the actual
+# reported bug: the recruiter reached this exact "click Generate Full Description in the panel"
+# text with NO chip at all after the real closing check had already fired once earlier in the same
+# conversation, making the chat flow feel inconsistent (chip sometimes offered, sometimes not).
+# Rephrased as a real question (not a bare statement) because apply_updates strips
+# suggested_options from any turn that isn't posing a question — a bare statement here would
+# silently eat the chip regardless of what this constant sets it to.
+_READY_TO_GENERATE_RESPONSE = "Everything's captured for this role — ready to generate the full job description?"
+_READY_TO_GENERATE_OPTIONS = [_CLOSING_CHECK_READY_OPTION]
+
+# The narrative company fields the JD draws on for company-context sections — either at the
+# COMPANY PROFILE level (set once, reused across every job) or as a job-specific override.
+_COMPANY_CONTEXT_FIELDS = ["company_overview", "company_culture", "benefits", "work_life_balance", "why_join_us"]
+_COMPANY_CONTEXT_CHECK_RESPONSE = (
+    "Would you like to add some company context for this posting — like a quick overview, your "
+    "culture, or benefits — or should we keep it generic?"
+)
+
+
+def _company_context_present(company_profile: dict, job_state: dict) -> bool:
+    """True once there's SOME real company narrative context to draw from for this job — checked
+    at generation time by the JD prompt's own "job-specific override if present, else the company
+    profile field, else omit" rule, but checked here too so the COMPANY CONTEXT CHECK (see
+    prompts.py) only ever fires when it's genuinely all missing in BOTH places, never when
+    there's already something for the JD to work with.
+    """
+    company_profile = company_profile or {}
+    if any(company_profile.get(f) for f in _COMPANY_CONTEXT_FIELDS):
+        return True
+    overrides = job_state.get("company_overrides") or {}
+    return any(overrides.get(f) for f in _COMPANY_CONTEXT_FIELDS)
 
 
 def _next_checklist_prompt(job_state: dict, skipped: set[str] | None = None) -> tuple[str, str, list[str]] | None:
@@ -594,6 +766,7 @@ def _fallback_turn_analysis(state: GraphState) -> TurnAnalysis:
             intent=Intent.CHITCHAT_OR_UNCLEAR,
             enough_information=True,
             response=_READY_TO_GENERATE_RESPONSE,
+            suggested_options=_READY_TO_GENERATE_OPTIONS,
         )
     return TurnAnalysis(intent=Intent.CHITCHAT_OR_UNCLEAR, enough_information=False, response=FALLBACK_RESPONSE)
 
@@ -971,7 +1144,7 @@ def generate_jd(state: GraphState, config: RunnableConfig) -> dict:
         )
         return {"messages": [AIMessage(content=response)], "last_response": response}
 
-    jd = _strip_markdown(output.model_dump(mode="json"))
+    jd = _dedupe_jd_lists(_strip_markdown(output.model_dump(mode="json")))
     jd_versions = {"1": jd}
     save_jd_versions(session_id, jd_versions)
     save_selected_version(session_id, "1")
@@ -1022,7 +1195,7 @@ def refine_jd(state: GraphState, config: RunnableConfig) -> dict:
         )
         return {"messages": [AIMessage(content=response)], "last_response": response}
 
-    updated_jd = _strip_markdown(output.updated_jd.model_dump(mode="json"))
+    updated_jd = _dedupe_jd_lists(_strip_markdown(output.updated_jd.model_dump(mode="json")))
     new_jd_versions = dict(jd_versions)
     new_jd_versions[version] = updated_jd
     save_refined_jd(session_id, version, updated_jd)

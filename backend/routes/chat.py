@@ -13,8 +13,11 @@ from backend.agent.nodes import (
     _CLOSING_CHECK_OPTIONS,
     _CLOSING_CHECK_READY_OPTION,
     _CLOSING_CHECK_RESPONSE,
+    _company_context_present,
+    _COMPANY_CONTEXT_CHECK_RESPONSE,
     _job_state_from_record,
     _next_checklist_prompt,
+    _READY_TO_GENERATE_OPTIONS,
     _READY_TO_GENERATE_RESPONSE,
     apply_field_changes,
     checklist_resolved,
@@ -453,6 +456,20 @@ def skip_field(session_id: str, user: dict = Depends(get_current_recruiter)) -> 
             "suggested_options": chips,
             "options_multi_select": False,
         }
+    elif not _company_context_present(state.get("company_profile") or {}, job_state) and not state.get(
+        "company_context_check_asked"
+    ):
+        # The checklist just became fully resolved via this skip, and there's genuinely no company
+        # context anywhere yet — ask the same one-time question analyze_turn asks on the LLM-driven
+        # path (see COMPANY CONTEXT CHECK in prompts.py). Kept in sync here since this direct,
+        # LLM-free endpoint has its own copy of the "what's next" decision.
+        response_text = _COMPANY_CONTEXT_CHECK_RESPONSE
+        update = {
+            "asking_about_field": "company_context",
+            "suggested_options": [],
+            "options_multi_select": False,
+            "company_context_check_asked": True,
+        }
     elif not state.get("closing_check_asked"):
         # The checklist just became fully resolved via this skip — ask the same one-time closing
         # question analyze_turn asks on the LLM-driven path (see FINAL CLOSING CHECK in prompts.py)
@@ -469,7 +486,7 @@ def skip_field(session_id: str, user: dict = Depends(get_current_recruiter)) -> 
         response_text = _READY_TO_GENERATE_RESPONSE
         update = {
             "asking_about_field": None,
-            "suggested_options": [],
+            "suggested_options": _READY_TO_GENERATE_OPTIONS,
             "options_multi_select": False,
         }
     update["skipped_checklist_fields"] = list(skipped)

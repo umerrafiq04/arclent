@@ -59,6 +59,11 @@ OPTIONAL_SKIPPABLE_FIELDS = {
     "job_category", "experience", "location", "work_mode", "employment_type",
     "education", "salary", "deadline", "additional_information", "preferred_skills",
     "required_skills", "responsibilities",
+    # Not a real JobState field — a synthetic marker for the COMPANY CONTEXT CHECK (prompts.py),
+    # which is about the company_overrides dict, not a single scalar/list field. Deliberately
+    # distinct from "additional_information" (a real, different scalar field) to avoid conflating
+    # the two skip actions.
+    "company_context",
 }
 
 

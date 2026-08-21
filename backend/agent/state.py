@@ -28,3 +28,4 @@ class GraphState(TypedDict):
     skipped_checklist_fields: list[str]  # standard-checklist fields explicitly skipped — never re-asked
     closing_check_asked: bool  # the one-time "anything else before we finalize?" question has been shown
     closing_check_confirmed: bool  # the recruiter has actually answered it with "I'm ready"
+    company_context_check_asked: bool  # the one-time "want to add company context?" question has been shown

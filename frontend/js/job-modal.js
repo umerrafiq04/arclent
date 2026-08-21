@@ -608,8 +608,7 @@
       fieldRow(
         "Education",
         jobState.education,
-        (v) => patchField({ field_updates: { education: v } }),
-        { select: ["Bachelor's degree", "Master's degree", "Not required"] }
+        (v) => patchField({ field_updates: { education: v } })
       )
     );
     draftForm.appendChild(grid4);
