@@ -121,9 +121,18 @@ def load_context(state: GraphState, config: RunnableConfig) -> dict:
     # started — this node just trusts the company_id the route handed it, same as every
     # other node here does no authorization of its own.
     updates: dict = {}
-    if not state.get("company_profile"):
-        company_id = config["configurable"].get("company_id")
-        updates["company_profile"] = get_company_profile_by_id(company_id) or {} if company_id else {}
+    # Always fetch fresh, never "hydrate once and cache in the checkpoint" the way job_id/
+    # recruiter_name below do — get_company_profile_by_id returns a dict with every column
+    # present (just None-valued when unset), so it's only ever EMPTY on a company that's never
+    # been touched at all; the moment company_name exists the dict itself is truthy, so the old
+    # "if not state.get(...)" guard would have frozen the FIRST turn's snapshot for the entire
+    # conversation. Verified live: a recruiter who fills in their company profile mid-conversation
+    # (or just after starting a job draft) kept seeing the COMPANY CONTEXT CHECK ask for context
+    # that was already saved — and, more importantly, JD generation would have used the same stale
+    # snapshot. A single indexed row lookup per turn is negligible next to the LLM call already
+    # happening on every turn, so there's no real cost to always reading it fresh.
+    company_id = config["configurable"].get("company_id")
+    updates["company_profile"] = get_company_profile_by_id(company_id) or {} if company_id else {}
 
     if not state.get("recruiter_name"):
         user_id = config["configurable"].get("user_id")
@@ -429,7 +438,16 @@ def analyze_turn(state: GraphState) -> dict:
         )
     )
     looks_like_closing_check = looks_like_closing_check or looks_like_ready_statement
-    if analysis.enough_information or looks_like_closing_check:
+    # This entire "getting ready to generate for the FIRST time" mechanism (the closing check, the
+    # company context check, the ready+"Generate JD" normalization) only makes sense before any JD
+    # exists yet. Verified live: once a draft was already generated and the recruiter approved it
+    # ("Looks good!"), this override still fired and told them "Everything's captured — ready to
+    # generate the full job description?" with a Generate JD chip — confusing and backward, since a
+    # description already exists; regenerating/refining/publishing are the only real next steps at
+    # that point, and the existing REQUEST_REFINEMENT/CONFIRM_PUBLISH prompt guidance already covers
+    # them correctly on its own — this block must get out of the way entirely once jd_versions exist.
+    jd_already_exists = bool(state.get("jd_versions"))
+    if not jd_already_exists and (analysis.enough_information or looks_like_closing_check):
         prospective_job_state = apply_field_changes(
             state.get("job_state") or {},
             analysis.field_updates,
