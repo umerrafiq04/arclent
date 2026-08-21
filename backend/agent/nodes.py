@@ -444,6 +444,55 @@ _SKILLS_FOLLOWUP_CAP = 3
 # postings asking for up to a few decades of experience should never be second-guessed.
 _MAX_PLAUSIBLE_EXPERIENCE_YEARS = 50
 
+# Deterministic safety net for a handful of extremely common, near-unambiguous phrasings —
+# verified live that the model sometimes verbally acknowledges a fact ("A Python developer with 4
+# years of experience, fully remote — got it!") without actually putting it in field_updates, so
+# job_state stays empty and the checklist re-asks a question the recruiter already answered in
+# their very first message. Intentionally narrow (never a general-purpose extractor, and never
+# overwrites a field that already has a value) to keep false positives low.
+_EXPERIENCE_RANGE_RE = re.compile(r"\b(\d{1,2})\s*(?:-|to)\s*(\d{1,2})\+?\s*(?:yrs?|years?)\b", re.IGNORECASE)
+_EXPERIENCE_SINGLE_RE = re.compile(r"\b(\d{1,2})(\+?)\s*(?:yrs?|years?)\b", re.IGNORECASE)
+_WORK_MODE_KEYWORDS = (
+    (re.compile(r"\bremote(?:ly)?\b", re.IGNORECASE), "Remote"),
+    (re.compile(r"\bhybrid\b", re.IGNORECASE), "Hybrid"),
+    (re.compile(r"\b(?:onsite|on-site|in[- ]office)\b", re.IGNORECASE), "Onsite"),
+)
+_EMPLOYMENT_TYPE_KEYWORDS = (
+    (re.compile(r"\bfull[- ]time\b", re.IGNORECASE), "Full-time"),
+    (re.compile(r"\bpart[- ]time\b", re.IGNORECASE), "Part-time"),
+    (re.compile(r"\bcontract(?:or)?\b", re.IGNORECASE), "Contract"),
+    (re.compile(r"\binternship\b", re.IGNORECASE), "Internship"),
+)
+
+
+def _extract_fact_backstop(text: str) -> dict:
+    """Best-effort, deterministic extraction of experience/work_mode/employment_type from raw
+    recruiter text — called from apply_updates to fill in whatever the model's own field_updates
+    missed. Only ever used to fill a field that's CURRENTLY EMPTY (see the caller), never to
+    overwrite the model's own (or an earlier) value, so a false-positive match on unrelated text
+    later in the conversation can only ever matter if that field was somehow still unset.
+    """
+    if not text:
+        return {}
+    found: dict = {}
+    range_match = _EXPERIENCE_RANGE_RE.search(text)
+    if range_match:
+        found["experience"] = f"{range_match.group(1)}-{range_match.group(2)} years"
+    else:
+        single_match = _EXPERIENCE_SINGLE_RE.search(text)
+        if single_match:
+            found["experience"] = f"{single_match.group(1)}{single_match.group(2)} years"
+    for pattern, label in _WORK_MODE_KEYWORDS:
+        if pattern.search(text):
+            found["work_mode"] = label
+            break
+    for pattern, label in _EMPLOYMENT_TYPE_KEYWORDS:
+        if pattern.search(text):
+            found["employment_type"] = label
+            break
+    return found
+
+
 _CHECKLIST_ORDER = [
     "required_skills",
     "responsibilities",
@@ -668,6 +717,21 @@ def apply_updates(state: GraphState, config: RunnableConfig) -> dict:
             analysis.get("company_overrides"),
         )
 
+    # Deterministic backstop for experience/work_mode/employment_type the model verbally
+    # acknowledged but never actually put in field_updates (see _extract_fact_backstop). Only
+    # fills a field that's STILL empty after the model's own extraction above, so this can never
+    # override a real value — and never runs for _BLOCK_ALL_VALUES turns, matching the "off-topic
+    # turns carry no confirmed job content" rule those already enforce.
+    if intent not in _BLOCK_ALL_VALUES:
+        last_human_text = ""
+        for m in reversed(state.get("messages") or []):
+            if isinstance(m, HumanMessage):
+                last_human_text = m.content or ""
+                break
+        for field, value in _extract_fact_backstop(last_human_text).items():
+            if not job_state.get(field):
+                job_state[field] = value
+
     llm_enough = bool(analysis.get("enough_information"))
     llm_missing = analysis.get("missing_essential") or []
 
@@ -784,11 +848,19 @@ def apply_updates(state: GraphState, config: RunnableConfig) -> dict:
     # already supplied its own suggested_options, so Skip-button coverage never lags chip
     # coverage.
     if not asking_about_field and reply_is_a_question:
-        response_lower = analysis.get("response", "").lower()
+        # Only the sentence that actually POSES the question, never an earlier acknowledgment
+        # clause restating a fact the recruiter already gave — "2 years of experience — got it.
+        # What skills should this role require?" contains "years of experience" in the
+        # acknowledgment half, which would otherwise wrongly hijack this turn's chips onto the
+        # experience-band defaults even though the real question is about something else entirely
+        # (reported live: bot asks about skills, shows experience chips).
+        response_text = analysis.get("response", "")
+        question_sentences = [s for s in re.split(r"(?<=[.!?])\s+", response_text) if "?" in s]
+        question_text_lower = (" ".join(question_sentences) if question_sentences else response_text).lower()
         for candidate_field, phrases in _KEYWORD_FIELD_HINTS:
             if candidate_field in missing:
                 continue
-            if any(phrase in response_lower for phrase in phrases):
+            if any(phrase in question_text_lower for phrase in phrases):
                 asking_about_field = candidate_field
                 break
 
