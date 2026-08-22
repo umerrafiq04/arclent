@@ -1,17 +1,17 @@
 """Deterministic "enough information" rule — never left to LLM judgment alone.
 
 Hard floor (always required, checked in code):
-  - job_title is set
+  - job_title, location, and salary are all set (mandatory per an explicit founder decision —
+    these three can never be skipped, unlike every other checklist field)
   - at least one of required_skills / responsibilities is non-empty
 
-Soft essentials (experience / location / work_mode "if relevant" to the role) are
-context-dependent, so `analyze_turn`'s prompt asks the model to flag them in
-`missing_essential` only when they genuinely matter for that job. `apply_updates`
-combines both: sufficiency is reached once the hard floor holds AND the model
-isn't currently flagging any soft-essential as missing.
+Soft essentials (experience / work_mode "if relevant" to the role) are context-dependent, so
+`analyze_turn`'s prompt asks the model to flag them in `missing_essential` only when they
+genuinely matter for that job. `apply_updates` combines both: sufficiency is reached once the
+hard floor holds AND the model isn't currently flagging any soft-essential as missing.
 """
 
-HARD_REQUIRED_SCALAR = ("job_title",)
+HARD_REQUIRED_SCALAR = ("job_title", "location", "salary")
 HARD_REQUIRED_ANY_OF_LISTS = ("required_skills", "responsibilities")
 
 

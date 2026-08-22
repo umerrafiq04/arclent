@@ -1,6 +1,6 @@
 from pydantic import BaseModel, Field
 
-from backend.models import ListOperation
+from backend.models import JDListOperation, ListOperation
 
 
 class ChatRequest(BaseModel):
@@ -35,19 +35,28 @@ class ChatResponse(BaseModel):
     # thing that should gate the "Generate Full Description"/"Regenerate" button's enabled state.
     # Never infer readiness from the LLM's own judgment or from the button simply being clickable.
     ready_to_generate: bool = False
+    # Which of COMPANY_OVERRIDE_FIELDS the stored company profile is still missing — drives the
+    # draft panel's "add these details" alert. Computed server-side (not derived from company
+    # profile data shipped to the client) so the frontend never needs its own copy of that field
+    # list to stay in sync.
+    missing_company_fields: list[str] = Field(default_factory=list)
 
 
 class JobStatePatch(BaseModel):
     """Direct, silent job_state edit — the draft form uses this for field edits (title,
     experience, salary, skills add/remove, company-context overrides, etc.) instead of sending a
     chat message, so editing the draft never triggers a bot reply or an LLM call.
-    jd_text_updates edits the CURRENT job description draft's own text fields directly (e.g. the
-    summary) — same principle, a hand-edit shouldn't need an LLM refinement call either.
+    jd_text_updates edits the CURRENT job description draft's own text (string) fields directly
+    (e.g. the summary, about the role) — same principle, a hand-edit shouldn't need an LLM
+    refinement call either. jd_list_operations does the same for the draft's own LIST fields
+    (major accountabilities, requirements, qualifications, stand-out, benefits) — ADD/REMOVE, same
+    semantics as list_operations above but scoped to the drafted document instead of job_state.
     """
     field_updates: dict[str, str] = Field(default_factory=dict)
     list_operations: list[ListOperation] = Field(default_factory=list)
     company_overrides: dict[str, str] = Field(default_factory=dict)
     jd_text_updates: dict[str, str] = Field(default_factory=dict)
+    jd_list_operations: list[JDListOperation] = Field(default_factory=list)
 
 
 class CompanyProfileUpdate(BaseModel):

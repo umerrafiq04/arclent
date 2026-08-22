@@ -426,6 +426,15 @@
       // Selects have no natural "blur to commit" moment the way typed fields do — commit on
       // change instead, immediately.
       input.addEventListener("change", () => onCommit(input.value));
+    } else if (opts.date) {
+      // Native calendar picker — value/onCommit both use the browser's own YYYY-MM-DD format,
+      // so no separate parsing/formatting layer is needed. An existing free-text deadline (from
+      // before this became a date field) simply won't pre-fill here if it's not already in that
+      // exact format — picking a new date always overwrites it going forward.
+      input = document.createElement("input");
+      input.type = "date";
+      input.value = value || "";
+      input.addEventListener("change", () => onCommit(input.value));
     } else {
       if (opts.textarea) {
         input = document.createElement("textarea");
@@ -495,13 +504,6 @@
     return wrap;
   }
 
-  function sectionTitle(text) {
-    const h = document.createElement("h4");
-    h.className = "jm-section-title";
-    h.textContent = text;
-    return h;
-  }
-
   function renderDraftForm(data) {
     const jobState = data.job_state || {};
     const jdVersions = data.jd_versions;
@@ -543,13 +545,23 @@
     }
     draftForm.appendChild(header);
 
+    // The generation prompt deliberately never invents company overview/culture/benefits/
+    // work-life-balance/why-join-us content when the company profile doesn't have it (never even
+    // generic filler) — so this draft is missing those sections until the recruiter fills them in
+    // on the Company Profile. Surface that plainly rather than let it read as an incomplete draft.
+    if (data.missing_company_fields && data.missing_company_fields.length > 0) {
+      const alert = document.createElement("div");
+      alert.className = "jm-company-alert";
+      alert.textContent =
+        "Add company overview, culture, benefits, work-life balance, and why-join-us details in " +
+        "your Company Profile so they can appear in this job description — they're left out until then.";
+      draftForm.appendChild(alert);
+    }
+
     const jd = (jdVersions && jdVersions["1"]) || {};
 
     draftForm.appendChild(
       fieldRow("Job Title", jobState.job_title, (v) => patchField({ field_updates: { job_title: v } }))
-    );
-    draftForm.appendChild(
-      fieldRow("Job Category", jobState.job_category, (v) => patchField({ field_updates: { job_category: v } }))
     );
 
     if (hasJd) {
@@ -607,20 +619,14 @@
       fieldRow("Salary Range", jobState.salary, (v) => patchField({ field_updates: { salary: v } }))
     );
     grid3.appendChild(
-      fieldRow("Deadline", jobState.deadline, (v) => patchField({ field_updates: { deadline: v } }))
-    );
-    draftForm.appendChild(grid3);
-
-    const grid4 = document.createElement("div");
-    grid4.className = "jm-field-grid";
-    grid4.appendChild(
       fieldRow(
-        "Education",
-        jobState.education,
-        (v) => patchField({ field_updates: { education: v } })
+        "Application Deadline",
+        jobState.deadline,
+        (v) => patchField({ field_updates: { deadline: v } }),
+        { date: true }
       )
     );
-    draftForm.appendChild(grid4);
+    draftForm.appendChild(grid3);
 
     draftForm.appendChild(
       listEditor(
@@ -650,40 +656,53 @@
     );
 
     if (hasJd) {
+      // Fully editable now (was read-only) — this is exactly what gets published, so a recruiter
+      // making a quick fix shouldn't have to leave the panel and go refine it via chat. Text
+      // fields commit via jd_text_updates, list fields via jd_list_operations — both patch the
+      // drafted document directly, same "no chat message, no LLM call" principle as every other
+      // field edit in this panel.
       const details = document.createElement("details");
       details.className = "jm-expandable";
+      details.open = true;
       const summary = document.createElement("summary");
       summary.textContent = "Full job description detail";
       details.appendChild(summary);
       const body = document.createElement("div");
       body.className = "jm-expandable-body";
+
       [
-        ["About the Role", jd.about_role],
-        ["Company Overview", jd.company_overview],
-        ["Why Join", jd.why_company],
-        ["Major Accountabilities", jd.major_accountabilities],
-        ["Minimum Requirements", jd.minimum_requirements],
-        ["Required Qualifications", jd.required_qualifications],
-        ["Preferred Qualifications", jd.preferred_qualifications],
-        ["Stand Out", jd.stand_out],
-        ["Benefits", jd.benefits],
-      ].forEach(([label, val]) => {
-        if (!val || (Array.isArray(val) && val.length === 0)) return;
-        body.appendChild(sectionTitle(label));
-        if (Array.isArray(val)) {
-          const ul = document.createElement("ul");
-          val.forEach((item) => {
-            const li = document.createElement("li");
-            li.textContent = item;
-            ul.appendChild(li);
-          });
-          body.appendChild(ul);
-        } else {
-          const p = document.createElement("p");
-          p.textContent = val;
-          body.appendChild(p);
-        }
+        ["About the Role", "about_role"],
+        ["Company Overview", "company_overview"],
+        ["Why Join", "why_company"],
+      ].forEach(([label, key]) => {
+        body.appendChild(
+          fieldRow(
+            label,
+            jd[key] || "",
+            (v) => patchField({ jd_text_updates: { [key]: v } }),
+            { textarea: true, rows: 3 }
+          )
+        );
       });
+
+      [
+        ["Major Accountabilities", "major_accountabilities"],
+        ["Minimum Requirements", "minimum_requirements"],
+        ["Required Qualifications", "required_qualifications"],
+        ["Preferred Qualifications", "preferred_qualifications"],
+        ["Stand Out", "stand_out"],
+        ["Benefits", "benefits"],
+      ].forEach(([label, key]) => {
+        body.appendChild(
+          listEditor(
+            label,
+            jd[key],
+            (v) => patchField({ jd_list_operations: [{ field: key, operation: "ADD", values: [v] }] }),
+            (v) => patchField({ jd_list_operations: [{ field: key, operation: "REMOVE", values: [v] }] })
+          )
+        );
+      });
+
       details.appendChild(body);
       draftForm.appendChild(details);
     }

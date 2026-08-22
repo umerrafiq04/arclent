@@ -10,6 +10,7 @@ logger = logging.getLogger(__name__)
 
 from backend.agent.graph import get_compiled_graph
 from backend.agent.nodes import (
+    _apply_list_operation,
     _AUTO_GENERATE_RESPONSE,
     _job_state_from_record,
     _next_checklist_prompt,
@@ -30,6 +31,7 @@ from backend.database import (
     upsert_job_draft,
 )
 from backend.document_extract import DocumentExtractError, extract_text
+from backend.models import OPTIONAL_SKIPPABLE_FIELDS
 from backend.schemas import ChatMessage, ChatRequest, ChatResponse, JobStatePatch
 
 router = APIRouter(prefix="/api/chat", tags=["chat"])
@@ -66,6 +68,13 @@ _COMPLETENESS_FIELDS = (
     "employment_type", "education", "salary",
 )
 
+# Fixed display order for the draft panel's "add these details" alert — COMPANY_OVERRIDE_FIELDS
+# itself is a set (membership checks elsewhere), so this keeps missing_company_fields stable
+# across responses instead of set-iteration order, which Python doesn't guarantee.
+_COMPANY_ALERT_FIELDS_ORDER = (
+    "company_overview", "company_culture", "benefits", "work_life_balance", "why_join_us",
+)
+
 
 def _completeness_pct(job_state: dict) -> int:
     total = len(_COMPLETENESS_FIELDS) + 2  # + required_skills, responsibilities
@@ -98,6 +107,8 @@ def _to_chat_messages(raw_messages: list, selected_version: str | None) -> list[
 def _to_response(session_id: str, state: dict) -> ChatResponse:
     job_state = state.get("job_state") or {}
     job_record = get_job_by_session_id(session_id)
+    company_profile = state.get("company_profile") or {}
+    missing_company_fields = [f for f in _COMPANY_ALERT_FIELDS_ORDER if not company_profile.get(f)]
     return ChatResponse(
         session_id=session_id,
         phase=state.get("phase", "collecting"),
@@ -114,6 +125,7 @@ def _to_response(session_id: str, state: dict) -> ChatResponse:
         suggested_options=state.get("suggested_options") or [],
         options_multi_select=bool(state.get("options_multi_select")),
         ready_to_generate=ready_to_generate(state),
+        missing_company_fields=missing_company_fields,
     )
 
 
@@ -296,18 +308,23 @@ def patch_job_state(session_id: str, body: JobStatePatch, user: dict = Depends(g
 
     update = {"job_state": job_state, "jd_stale": jd_stale, "phase": phase}
 
-    # Hand-editing the current draft's own text (e.g. the summary) directly — same principle as
-    # job_state fields: no LLM refinement call needed for a literal edit. Only overwrites keys
-    # that already exist on the draft (defense-in-depth allowlist), and doesn't mark it stale —
-    # a direct text fix isn't "out of date with job_state" the way an unrelated field change is.
+    # Hand-editing the current draft's own text/list fields directly (e.g. the summary, about the
+    # role, major accountabilities) — same principle as job_state fields: no LLM refinement call
+    # needed for a literal edit. Only overwrites keys that already exist on the draft
+    # (defense-in-depth allowlist), and doesn't mark it stale — a direct fix to the drafted content
+    # itself isn't "out of date with job_state" the way an unrelated job_state field change is.
     selected_version = state.get("selected_version")
     jd_versions = state.get("jd_versions") or {}
-    if body.jd_text_updates and selected_version and jd_versions.get(selected_version):
+    if (body.jd_text_updates or body.jd_list_operations) and selected_version and jd_versions.get(selected_version):
         jd = dict(jd_versions[selected_version])
         changed = False
         for key, value in body.jd_text_updates.items():
             if key in jd:
                 jd[key] = value
+                changed = True
+        for op in body.jd_list_operations:
+            if op.field in jd:
+                jd[op.field] = _apply_list_operation(jd.get(op.field) or [], op.operation, op.values)
                 changed = True
         if changed:
             new_jd_versions = dict(jd_versions)
@@ -384,11 +401,18 @@ def skip_field(session_id: str, user: dict = Depends(get_current_recruiter)) -> 
         raise HTTPException(status_code=404, detail="No conversation found for this session_id")
 
     job_state = state.get("job_state") or {}
+    currently_asking = state.get("asking_about_field")
+    # Defense-in-depth: the UI never renders a "Skip this" button for a mandatory field (job_title/
+    # location/salary — see OPTIONAL_SKIPPABLE_FIELDS) since asking_about_field itself never gets
+    # set to one of those in the first place, but this direct endpoint is still reachable on its
+    # own, so it must refuse rather than silently honor a skip that shouldn't be possible.
+    if currently_asking and currently_asking not in OPTIONAL_SKIPPABLE_FIELDS:
+        raise HTTPException(status_code=400, detail=f"{currently_asking} is required and can't be skipped.")
+
     # The field being skipped is whatever question is currently on screen — a skipped field's
     # job_state value stays empty by design, so without remembering it here _next_checklist_prompt
     # would just re-offer the exact same question forever instead of moving on.
     skipped = set(state.get("skipped_checklist_fields") or [])
-    currently_asking = state.get("asking_about_field")
     if currently_asking:
         skipped.add(currently_asking)
 

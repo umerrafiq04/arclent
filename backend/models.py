@@ -48,16 +48,17 @@ COMPANY_OVERRIDE_FIELDS = {
     "work_life_balance", "why_join_us",
 }
 
-# Fields a recruiter can decline to answer without blocking the conversation. job_title is never
-# in here — sufficiency.py's hard floor never lets it go missing. required_skills/responsibilities
-# ARE in here even though the hard floor requires at least one of the two: apply_updates only ever
-# lets the "Skip this" affordance through for whichever of the pair is NOT the one currently
-# satisfying the hard floor (checked against the "required_skills_or_responsibilities" sentinel in
-# missing_essential), so the floor itself can never actually be skipped away — only the redundant
-# second ask once the first already covers it.
+# Fields a recruiter can decline to answer without blocking the conversation. job_title, location,
+# and salary are never in here — sufficiency.py's hard floor never lets any of them go missing (an
+# explicit founder decision: these three are mandatory, no "Skip this" affordance at all).
+# required_skills/responsibilities ARE in here even though the hard floor requires at least one of
+# the two: apply_updates only ever lets the "Skip this" affordance through for whichever of the
+# pair is NOT the one currently satisfying the hard floor (checked against the
+# "required_skills_or_responsibilities" sentinel in missing_essential), so the floor itself can
+# never actually be skipped away — only the redundant second ask once the first already covers it.
 OPTIONAL_SKIPPABLE_FIELDS = {
-    "job_category", "experience", "location", "work_mode", "employment_type",
-    "education", "salary", "deadline", "additional_information", "preferred_skills",
+    "job_category", "experience", "work_mode", "employment_type",
+    "education", "deadline", "additional_information", "preferred_skills",
     "required_skills", "responsibilities",
 }
 
@@ -96,6 +97,25 @@ INTENTS_BLOCK_LIST_AND_OVERRIDE_CHANGES = {
 class ListOperation(BaseModel):
     field: Literal["required_skills", "preferred_skills", "responsibilities"]
     operation: Literal["ADD", "REMOVE", "REPLACE"]
+    values: list[str]
+
+
+# The generated job description's OWN list fields (distinct from JobState's — see ListOperation
+# above) — what the draft panel's "Full job description detail" editor uses to add/remove items
+# directly on the drafted document, the same way ListOperation lets the recruiter edit
+# required_skills/preferred_skills/responsibilities on job_state.
+JD_LIST_FIELDS = (
+    "major_accountabilities", "minimum_requirements", "required_qualifications",
+    "preferred_qualifications", "stand_out", "benefits",
+)
+
+
+class JDListOperation(BaseModel):
+    field: Literal[
+        "major_accountabilities", "minimum_requirements", "required_qualifications",
+        "preferred_qualifications", "stand_out", "benefits",
+    ]
+    operation: Literal["ADD", "REMOVE"]
     values: list[str]
 
 

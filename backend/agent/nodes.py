@@ -51,6 +51,22 @@ _MD_ITALIC_RE = re.compile(r"(?<!\w)_([^_]+)_(?!\w)")
 _MD_LEADING_BULLET_RE = re.compile(r"^[\-\*]\s+")
 
 
+def _skills_floor_met(job_state: dict) -> bool:
+    """The original, narrower floor — job_title plus at least one of required_skills/
+    responsibilities — used ONLY to decide whether it's safe to consult the standard checklist for
+    a redirect/deterministic re-ask (the stalled-field override, the ready-normalization redirect,
+    and _fallback_turn_analysis below). sufficiency.hard_floor_met now ALSO requires location and
+    salary (mandatory per an explicit founder decision), but those two are themselves standard-
+    checklist items — gating "is it safe to check the checklist" on the FULL floor (including the
+    very fields the checklist exists to ask about) would be circular: the redirect could never fire
+    to ask about location/salary in the first place, since hard_floor_met would already be False
+    until they're answered. This narrower check breaks that circularity.
+    """
+    return bool(job_state.get("job_title")) and any(
+        bool(job_state.get(f)) for f in ("required_skills", "responsibilities")
+    )
+
+
 def _strip_markdown(value):
     """JD content is rendered as plain text, not through a markdown renderer — the prompt asks
     the model not to use markdown, but strip any that slips through anyway rather than rely on
@@ -309,7 +325,7 @@ def analyze_turn(state: GraphState) -> dict:
             analysis.field_updates,
             [op.model_dump() for op in analysis.list_operations],
         )
-        floor_would_break = stalled_field in ("required_skills", "responsibilities") and not hard_floor_met(
+        floor_would_break = stalled_field in ("required_skills", "responsibilities") and not _skills_floor_met(
             prospective_job_state
         )
         if not prospective_job_state.get(stalled_field) and not floor_would_break:
@@ -454,7 +470,7 @@ def analyze_turn(state: GraphState) -> dict:
             analysis.field_updates,
             [op.model_dump() for op in analysis.list_operations],
         )
-        if hard_floor_met(prospective_job_state):
+        if _skills_floor_met(prospective_job_state):
             # See the skills-loop-cap override above for why this prefers updates over state.
             skipped = set(updates.get("skipped_checklist_fields", state.get("skipped_checklist_fields") or []))
             next_field = _next_checklist_prompt(prospective_job_state, skipped)
@@ -671,19 +687,21 @@ _CHECKLIST_CHIPS = {
 # same founder decision as the shrunk checklist above. The recruiter can still change any of these
 # via chat (a normal field_updates edit) or the draft panel's own dropdown for each. work_mode
 # defaults to "Remote" specifically per a later founder correction (creator/content roles are
-# commonly remote-friendly) rather than staying unset — same defaulted treatment as the other three.
+# commonly remote-friendly) rather than staying unset — same defaulted treatment as the others.
+# education is deliberately NOT defaulted (removed per a later founder correction) — a degree
+# requirement is a material, candidate-facing fact that genuinely varies per role, so it's left
+# entirely unset (and out of the draft panel) unless the recruiter states one explicitly.
 _DEFAULT_FIELD_VALUES = {
     "experience": "Mid-Level",
     "employment_type": "Full-time",
-    "education": "Bachelor's degree",
     "work_mode": "Remote",
 }
 
 
 def _apply_default_field_values(job_state: dict) -> dict:
-    """Fills experience/employment_type/education/work_mode with their standing defaults the
-    moment job_title exists and they're still empty — never overwrites a real value (the
-    recruiter's own or an earlier default), so this is idempotent and safe to call on every turn.
+    """Fills experience/employment_type/work_mode with their standing defaults the moment
+    job_title exists and they're still empty — never overwrites a real value (the recruiter's own
+    or an earlier default), so this is idempotent and safe to call on every turn.
     """
     if not job_state.get("job_title"):
         return job_state
@@ -729,7 +747,7 @@ def _fallback_turn_analysis(state: GraphState) -> TurnAnalysis:
     since there's nothing deterministic to ask instead.
     """
     job_state = state.get("job_state") or {}
-    if hard_floor_met(job_state):
+    if _skills_floor_met(job_state):
         skipped = set(state.get("skipped_checklist_fields") or [])
         next_field = _next_checklist_prompt(job_state, skipped)
         if next_field:
@@ -757,13 +775,13 @@ def checklist_resolved(job_state: dict, skipped: set[str] | None = None) -> bool
 
 
 def ready_to_generate(state: GraphState) -> bool:
-    """Hard floor (title + skills-or-responsibilities) is necessary but not sufficient for
-    generation — without also requiring the standard checklist (location/work_mode/salary) to be
-    resolved, the JD generation prompt ends up working from a job_state thin enough that its own
-    "role-standard enrichment" instructions invent specifics the recruiter never gave. This is the
-    single source of truth for: route_after_apply's auto-generate trigger (the instant this flips
-    true for the first time, generation fires with no manual confirmation needed), the Regenerate
-    button's enabled state, and the direct /generate endpoint's own guard.
+    """Hard floor (title, location, salary, and skills-or-responsibilities — see sufficiency.py)
+    is necessary but not sufficient for generation — without also requiring the rest of the
+    standard checklist to be resolved, the JD generation prompt ends up working from a job_state
+    thin enough that its own "role-standard enrichment" instructions invent specifics the recruiter
+    never gave. This is the single source of truth for: route_after_apply's auto-generate trigger
+    (the instant this flips true for the first time, generation fires with no manual confirmation
+    needed), the Regenerate button's enabled state, and the direct /generate endpoint's own guard.
 
     Already-published jobs are grandfathered past the checklist check: editing an existing,
     previously-complete job (job_id is set) shouldn't suddenly re-gate Regenerate just because this
@@ -949,6 +967,13 @@ def apply_updates(state: GraphState, config: RunnableConfig) -> dict:
     # dropped both the Skip button and every chip on an obviously-a-question turn.
     asking_about_field = analysis.get("asking_about_field")
     reply_is_a_question = "?" in analysis.get("response", "")
+    # Preserved separately from asking_about_field below: that variable gets nulled for a mandatory
+    # field (job_title/location/salary) specifically so no "Skip this" button renders, but the chip
+    # fallback further down still needs to know what field this question is REALLY about — without
+    # this, a compliance gap (model asks about location/salary but forgets to supply its own chips)
+    # would fall through to the generic ["Skip"] fallback, which is exactly the affordance a
+    # mandatory field must never show.
+    raw_asking_about_field = asking_about_field
     # required_skills/responsibilities are in OPTIONAL_SKIPPABLE_FIELDS (see models.py) so whichever
     # one ISN'T covering the hard floor can still get a "Skip this" button — but only once the other
     # one already has content. Neither individual field name ever appears in `missing` (the hard
@@ -988,6 +1013,7 @@ def apply_updates(state: GraphState, config: RunnableConfig) -> dict:
                 continue
             if any(phrase in question_text_lower for phrase in phrases):
                 asking_about_field = candidate_field
+                raw_asking_about_field = candidate_field
                 break
 
     # A recruiter who verbally declines an optional field ("no preference", "not needed", "we can
@@ -1017,7 +1043,7 @@ def apply_updates(state: GraphState, config: RunnableConfig) -> dict:
     if not reply_is_a_question:
         suggested_options = []
     elif asking_about_field in _DEFAULT_OPTIONS_BY_FIELD:
-        # These four fields have exactly one fixed, canonical single-choice answer set — always
+        # These fields have exactly one fixed, canonical single-choice answer set — always
         # use it instead of trusting the model's own suggested_options, which occasionally drift
         # (e.g. still offering leftover skill-style chips for an experience-band question). No
         # ambiguity here, so there's no reason to prefer a model-supplied value over the known-good
@@ -1028,10 +1054,17 @@ def apply_updates(state: GraphState, config: RunnableConfig) -> dict:
         # The prompt asks the model for options on EVERY question, but compliance isn't
         # perfect — sometimes it spells options out in prose instead ("...4-6 years, or 7+
         # years?") without also populating suggested_options. Guarantee something tappable
-        # always appears rather than depending on prompt compliance alone — reuse whatever
-        # asking_about_field resolved to above (model-supplied or text-sniffed), and fall back
-        # to a generic pair as an absolute last resort.
-        suggested_options = _DEFAULT_OPTIONS_BY_FIELD.get(asking_about_field, _GENERIC_FALLBACK_OPTIONS)
+        # always appears rather than depending on prompt compliance alone. Uses
+        # raw_asking_about_field (before the Skip-eligibility nulling above), not the possibly-
+        # nulled asking_about_field: a mandatory field (location/salary) still needs its OWN real
+        # chip fallback here — falling through to _GENERIC_FALLBACK_OPTIONS (["Skip"]) would show
+        # a misleading skip affordance on a field that can't actually be skipped. required_skills/
+        # responsibilities/salary have no canonical fixed chip set of their own, so they correctly
+        # still get no chips at all in that case (a bare textbox), never the generic "Skip" one.
+        if raw_asking_about_field in OPTIONAL_SKIPPABLE_FIELDS:
+            suggested_options = _DEFAULT_OPTIONS_BY_FIELD.get(raw_asking_about_field, _GENERIC_FALLBACK_OPTIONS)
+        else:
+            suggested_options = _CHECKLIST_CHIPS.get(raw_asking_about_field, [])
         options_multi_select = False
 
     # A dedicated "Skip this" button already renders in the UI whenever asking_about_field is set

@@ -1219,3 +1219,13 @@ body.neo .empty-state {
   font-size: 13.5px;
   text-align: center;
 }
+
+.jm-company-alert {
+  margin-bottom: 16px;
+  padding: 12px 14px;
+  border: 2px solid var(--neo-yellow-dark, #f0b90b);
+  background: var(--neo-yellow, #ffd23f);
+  border-radius: 10px;
+  font-size: 13.5px;
+  line-height: 1.4;
+}
