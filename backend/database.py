@@ -404,14 +404,22 @@ def finalize_publish(
         ).fetchone()["last_number"]
         job_id = format_job_id(prefix, number)
 
+        # job_title here is the drafted document's own (deliberately more polished/specific)
+        # headline, not the recruiter's plain chip-selected job_state.job_title — the public
+        # listing and admin views read this column directly, so the enhanced title actually
+        # shows up where a candidate would see it, not just inside the chat JD card. Falls back
+        # to whatever was already stored (the plain title, from the earlier draft upsert) on the
+        # rare chance the generated document is missing one.
+        published_title = selected_jd.get("job_title")
         conn.execute(
             """
             UPDATE jobs
             SET job_id = ?, selected_jd = ?, selected_version = ?, status = 'published',
-                published_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+                published_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP,
+                job_title = COALESCE(?, job_title)
             WHERE session_id = ?
             """,
-            (job_id, json.dumps(selected_jd), selected_version, session_id),
+            (job_id, json.dumps(selected_jd), selected_version, published_title, session_id),
         )
         conn.commit()
         row = conn.execute("SELECT * FROM jobs WHERE session_id = ?", (session_id,)).fetchone()
@@ -426,7 +434,11 @@ def finalize_edit(session_id: str, job_state: dict, selected_jd: dict, selected_
     called, edits live only in the LangGraph checkpoint (see apply_updates' write-through guard).
     """
     payload = {
-        "job_title": job_state.get("job_title"),
+        # Prefer the drafted document's own (deliberately more polished/specific) headline over
+        # the recruiter's plain chip-selected job_state.job_title — same reasoning as
+        # finalize_publish above, so an edited-and-republished listing keeps showing the enhanced
+        # title, not a regression back to the plain one.
+        "job_title": selected_jd.get("job_title") or job_state.get("job_title"),
         "job_category": job_state.get("job_category"),
         "experience": job_state.get("experience"),
         "location": job_state.get("location"),

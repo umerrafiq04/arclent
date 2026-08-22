@@ -308,8 +308,19 @@ JOB-SPECIFIC COMPANY OVERRIDES (for this job only — use these INSTEAD OF the m
 when present, but never modify or contradict the stored company profile itself):
 {company_overrides_json}
 
-JOB DETAILS (describe the position itself — always use these as-is):
+JOB DETAILS (describe the position itself — use these as-is EXCEPT job_title, see below):
 {job_state_json}
+
+JOB TITLE HEADLINE: job_state.job_title is the recruiter's simple, informal selection (e.g. "Video Editor",
+"Podcast Editor") — for the actual published headline, write a more specific, polished, and appealing title that
+reflects what this posting is actually about, grounded in the real details above (required_skills, responsibilities,
+company profile). E.g. "Video Editor" -> "Cinematic Video Editor for YouTube Channel (Long-form + Shorts)" if the
+skills/responsibilities point that way, or "Podcast Editor" -> "Podcast Editor — Audio Post-Production & Sound
+Design". This is expected and encouraged, not a fabrication to avoid. Stay grounded, though: never change the
+underlying role/job family itself (a Video Editor posting must still read as a Video Editor role, not a Video
+Producer or Motion Graphics Designer one), and never invent a specialty, platform, or niche not actually implied by
+the real job details — the enhancement should read as a natural, more specific version of the same role, not an
+unrelated one.
 
 Tone: professional and clear, comprehensive enough to fully inform a candidate, but written in engaging, modern
 language rather than stiff corporate boilerplate — this is the one draft the recruiter will see, so it should read

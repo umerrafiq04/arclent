@@ -98,13 +98,14 @@ def _dedupe_jd_lists(jd: dict) -> dict:
 
 
 # These JD fields are supposed to mirror job_state exactly — logistics/identity facts, not prose
-# the model should be paraphrasing. Verified live: despite the generation prompt saying to use
-# JOB DETAILS "as-is", the recruiter picked the "Video Editor" chip and the drafted job_title came
-# back as "Cinematic Video Editor for YouTube Channel (Long-form + Shorts)" — a creative rewrite,
-# not a copy. Same "don't trust prompt compliance for a fact-fidelity guarantee" principle as
-# _dedupe_jd_lists above: force these fields back to job_state's own values deterministically
-# after every generation/refinement instead of hoping the model leaves them untouched.
-_JD_IDENTITY_FIELDS_FROM_JOB_STATE = ("job_title", "job_category", "employment_type", "location", "work_mode", "deadline")
+# the model should be paraphrasing (unlike job_title, which is DELIBERATELY left to the model's
+# own polish — see JD_GENERATION_PROMPT_TEMPLATE's headline guidance: "Video Editor" becoming
+# "Cinematic Video Editor for YouTube Channel (Long-form + Shorts)" is the intended, requested
+# behavior, not a fabrication to guard against). Same "don't trust prompt compliance for a
+# fact-fidelity guarantee" principle as _dedupe_jd_lists above, just scoped to the fields that
+# actually need it: force these back to job_state's own values deterministically after every
+# generation/refinement instead of hoping the model leaves them untouched.
+_JD_IDENTITY_FIELDS_FROM_JOB_STATE = ("job_category", "employment_type", "location", "work_mode", "deadline")
 
 
 def _apply_job_state_identity_fields(jd: dict, job_state: dict) -> dict:
