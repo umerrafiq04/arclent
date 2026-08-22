@@ -669,16 +669,23 @@ _CHECKLIST_QUESTIONS = {
     "location": 'Which city or region will this role be based in? You can also say "Worldwide" if it\'s fully remote.',
     "salary": "What's the salary range for this role, if you'd like to share one?",
 }
-# Empty, not ["Skip"], for the fields with no other canonical answer set: every caller of
-# _next_checklist_prompt (the skills-cap override, _fallback_turn_analysis, and the /skip-field
-# endpoint) also sets asking_about_field to this same field, which already renders a dedicated
-# "Skip this" button — a chip whose ONLY content is a second, differently-styled "Skip" duplicates
-# that button rather than adding a real option (reported live as a confusing double affordance).
+# required_skills/responsibilities stay empty, not ["Skip"]: both are still genuinely skippable
+# (see OPTIONAL_SKIPPABLE_FIELDS) whenever this fallback path does get asked, so a chip whose ONLY
+# content is a second, differently-styled "Skip" would duplicate the dedicated "Skip this" button
+# that already renders alongside it (reported live as a confusing double affordance).
+#
+# salary is different: it's mandatory now (no Skip button renders for it at all — see
+# OPTIONAL_SKIPPABLE_FIELDS), so leaving it with zero chips (as it used to be, back when it WAS
+# skippable) left the question with nothing tappable at all, unlike every other question in the
+# flow — reported live as "why isn't it suggesting chips" for this exact question. A specific
+# numeric range isn't safe to default to (the app spans very different currencies/scales — $/mo
+# for one role, ₹ LPA for another), so the one universally-safe, always-valid suggestion is
+# "Competitive, negotiable" — a real, complete answer on its own, not a stand-in for skipping.
 _CHECKLIST_CHIPS = {
     "required_skills": [],
     "responsibilities": [],
     "location": ["Worldwide", "New York", "London", "Bangalore"],
-    "salary": [],
+    "salary": ["Competitive, negotiable"],
 }
 
 # Deterministically defaulted the moment a job_title exists, never asked about at all — per the
@@ -1104,10 +1111,14 @@ def generate_jd(state: GraphState, config: RunnableConfig) -> dict:
     marks it selected (there's nothing to choose), so Publish becomes available right away.
 
     "Regenerate" (same function, called again once a draft already exists) is NOT a blank-page
-    rewrite — it passes the CURRENT draft into the prompt as a starting point to refresh/improve,
-    so any hand-edits the recruiter made directly in the panel (About the Role, Company Overview,
-    Stand Out, Benefits, etc.) survive a Regenerate instead of being silently discarded in favor of
-    a fresh draft built from job_state alone. See build_jd_generation_prompt's current_jd param.
+    rewrite — it passes the CURRENT draft into the prompt as an ENHANCEMENT baseline: fix errors,
+    polish wording, add missing depth, but never drop or replace a skill/point/fact that's already
+    there (see _JD_REGENERATION_CONTEXT). This deliberately relies on the model's own judgment
+    rather than a deterministic field-lock — "rewrite this typo, keep the meaning" is a genuine
+    editorial judgment call, not a fact-fidelity check code can verify. A first attempt at this used
+    a hard lock (verbatim-restore whatever the recruiter had last touched) and that was wrong in
+    the other direction: it froze hand-edited content so hard that Regenerate couldn't even fix an
+    obvious typo in it, which defeats the entire point of asking for a regeneration.
     """
     company_profile = state.get("company_profile") or {}
     job_state = state.get("job_state") or {}
@@ -1116,7 +1127,6 @@ def generate_jd(state: GraphState, config: RunnableConfig) -> dict:
     selected_version = state.get("selected_version")
     current_jd = jd_versions_existing.get(selected_version) if selected_version else None
     is_regeneration = bool(current_jd)
-    hand_edited_fields = state.get("jd_hand_edited_fields") or []
 
     time.sleep(3)  # this is the 2nd Mistral call in the same turn — avoid bursting past per-second rate limits
     prompt = build_jd_generation_prompt(company_profile, job_state, current_jd=current_jd)
@@ -1139,15 +1149,6 @@ def generate_jd(state: GraphState, config: RunnableConfig) -> dict:
     jd = _apply_job_state_identity_fields(
         _dedupe_stand_out(_strip_markdown(output.model_dump(mode="json")), job_state), job_state
     )
-    # The prompt ASKS the model to preserve hand-edited content (see _JD_REGENERATION_CONTEXT),
-    # but prompt compliance alone proved unreliable here too — verified live, a hand-edited
-    # About the Role got fully rewritten anyway on Regenerate despite the instruction. Force it
-    # deterministically: any field the recruiter has ever hand-edited gets restored from the
-    # pre-regeneration draft, unconditionally, regardless of what the model just produced.
-    if is_regeneration and hand_edited_fields:
-        for field in hand_edited_fields:
-            if field in current_jd:
-                jd[field] = current_jd[field]
     jd_versions = {"1": jd}
     save_jd_versions(session_id, jd_versions)
     save_selected_version(session_id, "1")

@@ -25,10 +25,3 @@ class GraphState(TypedDict):
     suggested_options: list[str]  # quick-reply chip labels for the current AI question, if any
     options_multi_select: bool  # whether the recruiter can tap several suggested_options before sending
     skipped_checklist_fields: list[str]  # standard-checklist fields explicitly skipped — never re-asked
-    # Names of JobDescriptionDraft's own narrative fields (job_summary/about_role/company_overview/
-    # why_company/stand_out/benefits) the recruiter has directly hand-edited via the draft panel at
-    # least once. Grows monotonically, never auto-clears — once a field is hand-edited it stays
-    # locked across every future Regenerate (see generate_jd), restored from the pre-regeneration
-    # draft regardless of what the model produces. required_skills/preferred_skills/responsibilities
-    # need no equivalent tracking: they live on job_state, never touched by generation at all.
-    jd_hand_edited_fields: list[str]

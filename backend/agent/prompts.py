@@ -148,6 +148,10 @@ mark, then stop — the next field waits for the next turn, even if it feels eff
   * experience, only if the recruiter explicitly wants to change the "Mid-Level" default (never asked proactively)
     -> ["Entry-Level", "Mid-Level", "Senior-Level"]
   * job_title not yet known ("what role are you hiring for?") -> 3-4 plausible common titles
+  * salary -> ALWAYS include "Competitive, negotiable" as one option (it's a real, complete answer on its own, not
+    a stand-in for skipping — salary can't be skipped). Add 1-3 more only if you can suggest a genuinely plausible
+    range given the role/location/company context; never invent a specific figure with false confidence when you
+    have no real basis for one — "Competitive, negotiable" alone is a perfectly fine set of exactly one option.
   Tailor every one of these to what's already known (company profile, job_title, job_category) rather than generic
   filler — a Data Analyst's skill suggestions must differ from a Video Editor's. The ONLY time this may be empty is
   when `response` is a statement with no question at all (e.g. a plain acknowledgment, an error message, an
@@ -363,22 +367,36 @@ list items). This content is rendered directly as-is, not through a markdown ren
 """
 
 # Injected into JD_GENERATION_PROMPT_TEMPLATE only when regenerating an EXISTING draft (see
-# generate_jd) — turns generation from "start from a blank page" into "refresh this specific
-# draft." Verified live this was a real, reported gap: clicking Regenerate after the recruiter had
-# hand-edited About the Role / Company Overview / Stand Out / Benefits directly in the panel threw
-# all of that away and wrote a fresh draft from job_state alone, since generation never even saw
-# the existing content. Necessary because job_state only carries the STRUCTURED facts
-# (title/location/salary/skills/etc.) — the narrative fields this template writes (job_summary,
-# about_role, company_overview, why_company, stand_out, benefits) live only in the drafted
-# document itself, so without this, a hand-edit to any of them is invisible to a regeneration.
+# generate_jd) — turns generation from "start from a blank page" into "enhance this specific
+# draft." Verified live this was a real, reported gap TWICE, in opposite directions: first,
+# clicking Regenerate after a hand-edit threw the edit away and wrote an unrelated fresh draft
+# from job_state alone (fixed by adding this section at all); then, once this section instructed
+# the model to "preserve" hand-edited content, it over-corrected and preserved it so rigidly that
+# an obvious typo the recruiter had typed ("ice crmae every time" as a benefit) never got
+# corrected on Regenerate either — defeating the entire point of asking for a regeneration. The
+# actual desired behavior (an explicit founder correction) is a genuine editorial judgment call,
+# not a fact-fidelity check: fix errors, polish wording, add missing depth, but never drop or
+# replace a skill/responsibility/benefit/point that's already there — enhance, don't discard, and
+# don't leave an obvious mistake untouched just because a human typed it.
 _JD_REGENERATION_CONTEXT = """
-CURRENT DRAFT (the recruiter has already reviewed this and may have hand-edited it directly — treat it as your
-starting point, not a blank page. PRESERVE its existing wording/content in every field wherever it's still accurate
-and consistent with the JOB DETAILS above; only rewrite or add what's genuinely missing, stale, or inconsistent with
-a job detail that has since changed (e.g. the location or salary was updated after this draft was written). Do not
-discard content the recruiter clearly wrote or edited themselves just to phrase it differently — this is a refresh,
-not a rewrite from scratch):
+CURRENT DRAFT (the recruiter has reviewed this, possibly hand-edited some of it — this is an ENHANCEMENT pass on
+top of it, not a rewrite from a blank page and not a frozen, do-not-touch document either):
 {current_jd_json}
+
+How to use the CURRENT DRAFT above:
+- Every specific skill, responsibility, benefit, requirement, or point already present in the CURRENT DRAFT must
+  still be present in your output in some form. You may reword it, expand it, move it, or fold it into a fuller
+  sentence — but never simply DROP it or swap it out for something unrelated. If in doubt, keep it.
+- ALWAYS correct spelling, grammar, and typos wherever they appear in the CURRENT DRAFT, including in text the
+  recruiter typed themselves — e.g. "ice crmae every time" must become "Ice cream every time," never left as a typo
+  and never deleted outright for being a typo. Fixing the error while keeping what it plainly meant IS preserving
+  it, not rewriting it.
+- You MAY add genuinely new, relevant content the current draft is missing (the usual ROLE-STANDARD
+  ENRICHMENT/STAND-OUT rules below still apply to anything new), and you MAY improve phrasing anywhere for clarity,
+  tone, or flow — this is an enhancement pass, real improvement is expected, not just error-fixing.
+- Only replace or remove something from the CURRENT DRAFT if it's now factually WRONG given the JOB DETAILS above
+  (e.g. it names a city that's no longer the location, or a skill that's since been removed from job_state) — never
+  because you'd have phrased it differently yourself.
 """
 
 
