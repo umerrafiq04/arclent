@@ -758,7 +758,11 @@
     publishBtn.className = "neo-btn neo-btn-solid";
     const alreadyPublished = data.job_record && data.job_record.status === "published" && data.phase === "published";
     publishBtn.textContent = alreadyPublished ? "Published ✓" : data.phase === "editing" ? "Publish Edit →" : "Publish Job →";
-    publishBtn.disabled = !hasJd || !data.selected_version || data.jd_stale || alreadyPublished;
+    // Deliberately NOT gated on jd_stale — once a description exists, the recruiter can always
+    // publish it as-is no matter how many further edits (add/remove/change any field) they've made
+    // since, regardless of whether they've clicked Regenerate again. Regenerate stays available as
+    // an option, never a requirement.
+    publishBtn.disabled = !hasJd || !data.selected_version || alreadyPublished;
     publishBtn.addEventListener("click", () => publishNow(publishBtn));
     actions.appendChild(publishBtn);
 

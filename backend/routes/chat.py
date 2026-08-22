@@ -474,8 +474,11 @@ def publish_session(session_id: str, user: dict = Depends(get_current_recruiter)
     selected_version = state.get("selected_version")
     if not (jd_versions and selected_version and jd_versions.get(selected_version)):
         raise HTTPException(status_code=400, detail="Generate a job description before publishing.")
-    if state.get("jd_stale"):
-        raise HTTPException(status_code=400, detail="The job description is out of date — regenerate it before publishing.")
+    # Publishing is deliberately allowed even when jd_stale is true (an explicit founder decision):
+    # once a JD exists, the recruiter can publish it as-is no matter how many further edits they've
+    # made since — Regenerate is offered, never required. jd_stale itself still exists purely as an
+    # informational signal (the chat prompt mentions it, see _jd_status_text in prompts.py), it's
+    # just no longer a hard gate on this endpoint.
 
     is_published_job = state.get("job_id") is not None
     if is_published_job and state.get("phase") != "editing":
