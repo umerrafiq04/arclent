@@ -581,8 +581,16 @@
     // Top-level fields are deliberately minimal — just the structured logistics facts. Every
     // actual JOB-CONTENT field (the written description, responsibilities, skills, etc.) lives
     // exactly once, inside "Full job description detail" below — see that section for why.
+    //
+    // Job Title is bound to the DRAFTED document's own headline (jd.job_title), not job_state's
+    // plain chip-selected one — job_state.job_title is only ever the simple input the generation
+    // prompt enhances FROM (e.g. "Thumbnail Designer" -> "Senior Thumbnail Designer — Visual
+    // Storytelling for High-Impact Digital Content"), and finalize_publish/finalize_edit persist
+    // the drafted jd's title to the public listing, not job_state's. This whole form only ever
+    // renders once hasJd is true (see the early return above), so jd.job_title always exists here
+    // — editing it goes through jd_text_updates so the recruiter previews exactly what publishes.
     draftForm.appendChild(
-      fieldRow("Job Title", jobState.job_title, (v) => patchField({ field_updates: { job_title: v } }))
+      fieldRow("Job Title", jd.job_title || jobState.job_title, (v) => patchField({ jd_text_updates: { job_title: v } }))
     );
 
     const grid1 = document.createElement("div");
