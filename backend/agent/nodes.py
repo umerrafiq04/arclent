@@ -97,6 +97,23 @@ def _dedupe_jd_lists(jd: dict) -> dict:
     return result
 
 
+# These JD fields are supposed to mirror job_state exactly — logistics/identity facts, not prose
+# the model should be paraphrasing. Verified live: despite the generation prompt saying to use
+# JOB DETAILS "as-is", the recruiter picked the "Video Editor" chip and the drafted job_title came
+# back as "Cinematic Video Editor for YouTube Channel (Long-form + Shorts)" — a creative rewrite,
+# not a copy. Same "don't trust prompt compliance for a fact-fidelity guarantee" principle as
+# _dedupe_jd_lists above: force these fields back to job_state's own values deterministically
+# after every generation/refinement instead of hoping the model leaves them untouched.
+_JD_IDENTITY_FIELDS_FROM_JOB_STATE = ("job_title", "job_category", "employment_type", "location", "work_mode", "deadline")
+
+
+def _apply_job_state_identity_fields(jd: dict, job_state: dict) -> dict:
+    result = dict(jd)
+    for field in _JD_IDENTITY_FIELDS_FROM_JOB_STATE:
+        result[field] = job_state.get(field) or None
+    return result
+
+
 def _job_state_from_record(record: dict) -> dict:
     return {
         "job_title": record.get("job_title"),
@@ -1066,7 +1083,7 @@ def generate_jd(state: GraphState, config: RunnableConfig) -> dict:
         )
         return {"messages": [AIMessage(content=response)], "last_response": response}
 
-    jd = _dedupe_jd_lists(_strip_markdown(output.model_dump(mode="json")))
+    jd = _apply_job_state_identity_fields(_dedupe_jd_lists(_strip_markdown(output.model_dump(mode="json"))), job_state)
     jd_versions = {"1": jd}
     save_jd_versions(session_id, jd_versions)
     save_selected_version(session_id, "1")
@@ -1117,7 +1134,9 @@ def refine_jd(state: GraphState, config: RunnableConfig) -> dict:
         )
         return {"messages": [AIMessage(content=response)], "last_response": response}
 
-    updated_jd = _dedupe_jd_lists(_strip_markdown(output.updated_jd.model_dump(mode="json")))
+    updated_jd = _apply_job_state_identity_fields(
+        _dedupe_jd_lists(_strip_markdown(output.updated_jd.model_dump(mode="json"))), job_state
+    )
     new_jd_versions = dict(jd_versions)
     new_jd_versions[version] = updated_jd
     save_refined_jd(session_id, version, updated_jd)

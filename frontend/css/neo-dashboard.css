@@ -819,6 +819,12 @@ body.neo .empty-state {
   display: flex;
   flex-direction: column;
   gap: 12px;
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none; /* legacy Edge/IE */
+}
+
+.jm-message-list::-webkit-scrollbar {
+  display: none; /* Chrome/Safari/Edge — scroll still works, just no visible track */
 }
 
 .job-modal-chat .chat-input-row {
@@ -992,6 +998,12 @@ body.neo .empty-state {
   min-height: 0;
   overflow-y: auto;
   padding: 24px;
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none; /* legacy Edge/IE */
+}
+
+.job-modal-draft::-webkit-scrollbar {
+  display: none; /* Chrome/Safari/Edge — scroll still works, just no visible track */
 }
 
 /* :not([hidden]) — an unconditional `display` here would override the native
@@ -1183,12 +1195,6 @@ body.neo .empty-state {
 .jm-expandable-body ul {
   margin: 4px 0 0;
   padding-left: 18px;
-}
-
-.jm-company-context {
-  border-top: 2px dashed var(--neo-black, #14140f);
-  padding-top: 12px;
-  margin-top: 8px;
 }
 
 .jm-draft-actions {

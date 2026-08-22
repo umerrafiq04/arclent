@@ -688,29 +688,6 @@
       draftForm.appendChild(details);
     }
 
-    // Company context — read-only from the stored profile, with a per-job override affordance.
-    const overrides = jobState.company_overrides || {};
-    const companyBox = document.createElement("div");
-    companyBox.className = "jm-company-context";
-    companyBox.appendChild(sectionTitle("Company Context"));
-    [
-      ["company_overview", "Overview"],
-      ["company_culture", "Culture"],
-      ["benefits", "Benefits"],
-      ["why_join_us", "Why Join Us"],
-    ].forEach(([key, label]) => {
-      const current = overrides[key] || (companyProfileCache && companyProfileCache[key]) || "";
-      companyBox.appendChild(
-        fieldRow(
-          `${label} (this job only)`,
-          current,
-          (v) => patchField({ company_overrides: { [key]: v } }),
-          { textarea: true, rows: 2 }
-        )
-      );
-    });
-    draftForm.appendChild(companyBox);
-
     const actions = document.createElement("div");
     actions.className = "jm-draft-actions";
 
@@ -952,7 +929,6 @@
     chatInput.style.height = `${Math.min(chatInput.scrollHeight, 140)}px`;
   });
 
-  let companyProfileCache = null;
   let closeTimer = null;
 
   // Smooth open/close: add .open a frame after unhiding (so the initial state paints first and
@@ -1023,13 +999,6 @@
   }
 
   window.openJobModal = async function (existingSessionId) {
-    if (!companyProfileCache) {
-      try {
-        companyProfileCache = await api.getCompanyProfile();
-      } catch (_) {
-        companyProfileCache = {};
-      }
-    }
     if (existingSessionId) {
       await openExisting(existingSessionId);
     } else {
