@@ -361,11 +361,12 @@ def analyze_turn(state: GraphState) -> dict:
     # left) — never let it reach the recruiter, not even once.
     #
     # Must match the SPECIFIC "want to add more?" phrasing, not just any sentence that happens to
-    # mention "skill"/"respons" near a question mark — the model's own CORRECT combined turn ("I've
-    # set Premiere Pro and After Effects as required skills... Which city will this be based in?")
-    # also contains both, and a bare keyword+"?" match was swallowing that whole legitimate message
-    # (including the description of what was actually generated) and replacing it with a generic
-    # "Got it, noted!" — silently hiding from the recruiter what skills/responsibilities got set.
+    # mention "skill"/"respons" near a question mark — a turn that's actually just announcing what
+    # was generated ("I've set Premiere Pro and After Effects as required skills... Which city will
+    # this be based in?") also contains both, and this check must NOT be what catches that turn —
+    # it's handled separately, more reliably, by the list_operations-based override below (which
+    # replaces the whole response outright once the recruiter no longer wants that announcement
+    # narrated at all — see the block right after this one).
     response_lower = (analysis.response or "").lower()
     is_skills_followup = "?" in response_lower and any(
         phrase in response_lower
@@ -417,6 +418,49 @@ def analyze_turn(state: GraphState) -> dict:
                 }
             )
 
+    # The recruiter doesn't want a chat announcement listing what required_skills/preferred_skills/
+    # responsibilities were auto-generated (explicit founder feedback: "it should not display what
+    # it does" — the panel already shows the generated list in full, chat should just move straight
+    # to the next question). Detected structurally, via list_operations touching these three fields
+    # — NOT by parsing/stripping the model's own response text, which is fragile and was explicitly
+    # hardened in the other direction last time (see is_skills_followup above: a bare keyword+"?"
+    # match used to swallow this exact combined "here's what I set... next question?" message
+    # entirely). The model reliably narrates the full list whenever this happens, so once it's
+    # unwanted, the response needs to be replaced outright with the real next question, not edited.
+    # Gated to before any JD exists: once collection is done, a later "add Python" edit is a normal
+    # CORRECT_INFORMATION turn (marks the JD stale, handled elsewhere), not this generation moment.
+    jd_already_exists = bool(state.get("jd_versions"))
+    _skills_family_fields = {"required_skills", "preferred_skills", "responsibilities"}
+    if not jd_already_exists and any(op.field in _skills_family_fields for op in analysis.list_operations):
+        prospective_job_state = apply_field_changes(
+            state.get("job_state") or {},
+            analysis.field_updates,
+            [op.model_dump() for op in analysis.list_operations],
+        )
+        if _skills_floor_met(prospective_job_state):
+            skipped = set(updates.get("skipped_checklist_fields", state.get("skipped_checklist_fields") or []))
+            next_field = _next_checklist_prompt(prospective_job_state, skipped)
+            if next_field:
+                question, field, chips = next_field
+                analysis = analysis.model_copy(
+                    update={
+                        "response": f"Got it, noted! {question}",
+                        "asking_about_field": field,
+                        "suggested_options": chips,
+                        "options_multi_select": False,
+                    }
+                )
+            else:
+                analysis = analysis.model_copy(
+                    update={
+                        "response": _AUTO_GENERATE_RESPONSE,
+                        "asking_about_field": None,
+                        "suggested_options": [],
+                        "options_multi_select": False,
+                        "enough_information": True,
+                    }
+                )
+
     # Never trust enough_information=true at face value: cross-check it against the same
     # deterministic checklist ready_to_generate() relies on. Verified live that the model reaches
     # this point far more often than prompt compliance alone would suggest — it reliably asks
@@ -461,7 +505,8 @@ def analyze_turn(state: GraphState) -> dict:
     # already exists; regenerating/refining/publishing are the only real next steps at that point,
     # and the existing REQUEST_REFINEMENT/CONFIRM_PUBLISH prompt guidance already covers them
     # correctly on its own — this block must get out of the way entirely once jd_versions exist.
-    jd_already_exists = bool(state.get("jd_versions"))
+    # (jd_already_exists itself is computed once, above, and reused by the skills-announcement
+    # suppression block right before this one.)
     if not jd_already_exists and (analysis.enough_information or looks_like_closing_check):
         prospective_job_state = apply_field_changes(
             state.get("job_state") or {},
