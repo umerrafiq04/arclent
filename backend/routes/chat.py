@@ -10,17 +10,10 @@ logger = logging.getLogger(__name__)
 
 from backend.agent.graph import get_compiled_graph
 from backend.agent.nodes import (
-    _CLOSING_CHECK_OPTIONS,
-    _CLOSING_CHECK_READY_OPTION,
-    _CLOSING_CHECK_RESPONSE,
-    _company_context_present,
-    _COMPANY_CONTEXT_CHECK_RESPONSE,
+    _AUTO_GENERATE_RESPONSE,
     _job_state_from_record,
     _next_checklist_prompt,
-    _READY_TO_GENERATE_OPTIONS,
-    _READY_TO_GENERATE_RESPONSE,
     apply_field_changes,
-    checklist_resolved,
     generate_jd,
     publish_edit,
     publish_job,
@@ -361,56 +354,8 @@ def generate_session(session_id: str, user: dict = Depends(get_current_recruiter
             )
         raise HTTPException(
             status_code=400,
-            detail="A few more details are needed before generating — experience, location, work mode, and employment type.",
+            detail="A few more details are needed before generating — location, work mode, and salary.",
         )
-
-    result = generate_jd(state, config)
-    graph.update_state(config, result)
-
-    final_state = graph.get_state(config).values
-    return _to_response(session_id, final_state)
-
-
-@router.post("/{session_id}/confirm-generate", response_model=ChatResponse)
-def confirm_and_generate(session_id: str, user: dict = Depends(get_current_recruiter)) -> ChatResponse:
-    """The "Generate JD" chip shown alongside the FINAL CLOSING CHECK question calls this instead
-    of sending a normal chat message — clicking that specific chip already IS the recruiter's
-    unambiguous confirmation that they're ready, so this sets closing_check_confirmed directly
-    (deterministic, no LLM call needed to interpret a literal button click) and generates in the
-    same request, rather than a two-step "send a chat message, hope the model reads it as ready,
-    then separately press Generate" round trip. Still enforces the same checklist guard /generate
-    does — this click only ever implies the closing-check-confirmation half of ready_to_generate(),
-    never a substitute for the checklist itself actually being resolved.
-    """
-    _authorize_session(session_id, user)
-
-    graph = get_compiled_graph()
-    config = {"configurable": {"thread_id": session_id, "company_id": user["company_id"], "user_id": user["id"]}}
-    state = graph.get_state(config).values
-    if not state:
-        raise HTTPException(status_code=404, detail="No conversation found for this session_id")
-
-    job_state = state.get("job_state") or {}
-    if not hard_floor_met(job_state):
-        raise HTTPException(
-            status_code=400,
-            detail="Add at least a job title and one required skill or responsibility before generating.",
-        )
-    skipped = set(state.get("skipped_checklist_fields") or [])
-    if not checklist_resolved(job_state, skipped):
-        raise HTTPException(
-            status_code=400,
-            detail="A few more details are needed before generating.",
-        )
-
-    graph.update_state(
-        config,
-        {
-            "closing_check_confirmed": True,
-            "messages": [HumanMessage(content=_CLOSING_CHECK_READY_OPTION)],
-        },
-    )
-    state = graph.get_state(config).values
 
     result = generate_jd(state, config)
     graph.update_state(config, result)
@@ -455,44 +400,31 @@ def skip_field(session_id: str, user: dict = Depends(get_current_recruiter)) -> 
             "asking_about_field": field,
             "suggested_options": chips,
             "options_multi_select": False,
+            "skipped_checklist_fields": list(skipped),
         }
-    elif not _company_context_present(state.get("company_profile") or {}, job_state) and not state.get(
-        "company_context_check_asked"
-    ):
-        # The checklist just became fully resolved via this skip, and there's genuinely no company
-        # context anywhere yet — ask the same one-time question analyze_turn asks on the LLM-driven
-        # path (see COMPANY CONTEXT CHECK in prompts.py). Kept in sync here since this direct,
-        # LLM-free endpoint has its own copy of the "what's next" decision.
-        response_text = _COMPANY_CONTEXT_CHECK_RESPONSE
-        update = {
-            "asking_about_field": "company_context",
-            "suggested_options": [],
-            "options_multi_select": False,
-            "company_context_check_asked": True,
-        }
-    elif not state.get("closing_check_asked"):
-        # The checklist just became fully resolved via this skip — ask the same one-time closing
-        # question analyze_turn asks on the LLM-driven path (see FINAL CLOSING CHECK in prompts.py)
-        # instead of declaring things done immediately. Kept in sync here since this direct,
-        # LLM-free endpoint has its own copy of the "what's next" decision.
-        response_text = _CLOSING_CHECK_RESPONSE
-        update = {
-            "asking_about_field": None,
-            "suggested_options": _CLOSING_CHECK_OPTIONS,
-            "options_multi_select": False,
-            "closing_check_asked": True,
-        }
-    else:
-        response_text = _READY_TO_GENERATE_RESPONSE
-        update = {
-            "asking_about_field": None,
-            "suggested_options": _READY_TO_GENERATE_OPTIONS,
-            "options_multi_select": False,
-        }
-    update["skipped_checklist_fields"] = list(skipped)
-    update["messages"] = [AIMessage(content=response_text)]
-    update["last_response"] = response_text
+        update["messages"] = [AIMessage(content=response_text)]
+        update["last_response"] = response_text
+        graph.update_state(config, update)
+        final_state = graph.get_state(config).values
+        return _to_response(session_id, final_state)
+
+    # The checklist just became fully resolved via this skip — auto-generate immediately, same as
+    # the chat path (see route_after_apply): no closing-check ceremony, no chip to click. This
+    # direct, LLM-free endpoint has its own copy of that "what's next" decision, so it triggers
+    # generation itself rather than relying on a graph turn that never runs here.
+    update = {
+        "asking_about_field": None,
+        "suggested_options": [],
+        "options_multi_select": False,
+        "skipped_checklist_fields": list(skipped),
+        "messages": [AIMessage(content=_AUTO_GENERATE_RESPONSE)],
+        "last_response": _AUTO_GENERATE_RESPONSE,
+    }
     graph.update_state(config, update)
+    state = graph.get_state(config).values
+
+    result = generate_jd(state, config)
+    graph.update_state(config, result)
 
     final_state = graph.get_state(config).values
     return _to_response(session_id, final_state)

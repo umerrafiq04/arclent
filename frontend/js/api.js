@@ -118,10 +118,6 @@ const api = {
   // The ONLY call that actually generates/regenerates the job description — a direct action,
   // never a side effect of a chat message.
   generateJd: (sessionId) => apiRequest(`/chat/${encodeURIComponent(sessionId)}/generate`, { method: "POST" }),
-  // The "Generate JD" chip in chat calls this instead — confirms the closing check AND generates
-  // in one request, since clicking that specific chip already IS the recruiter's confirmation.
-  confirmGenerateJd: (sessionId) =>
-    apiRequest(`/chat/${encodeURIComponent(sessionId)}/confirm-generate`, { method: "POST" }),
   // The ONLY call that actually publishes a job or a published-job edit — a direct action, never
   // a side effect of a chat message.
   publishJob: (sessionId) => apiRequest(`/chat/${encodeURIComponent(sessionId)}/publish`, { method: "POST" }),

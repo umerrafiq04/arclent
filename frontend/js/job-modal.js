@@ -19,9 +19,6 @@
   const draftForm = document.getElementById("jm-draft-form");
 
   const STORAGE_KEY = "recruiter_active_job_session";
-  // Mirrors backend/agent/nodes.py's _CLOSING_CHECK_READY_OPTION — the one chip label that means
-  // "confirm + generate" instead of a normal chat message (see confirmAndGenerate below).
-  const GENERATE_JD_CHIP_LABEL = "Generate JD";
 
   let sessionId = null;
   let currentPhase = null;
@@ -69,14 +66,7 @@
         chip.textContent = opt;
         chip.addEventListener("click", () => {
           row.querySelectorAll(".jm-chip").forEach((c) => (c.disabled = true));
-          // This one chip means "confirm I'm ready AND generate" — a direct action, not a normal
-          // chat message (see confirmAndGenerate: generation only ever happens via a direct
-          // endpoint call, never as a side effect of something the LLM merely read as "ready").
-          if (opt === GENERATE_JD_CHIP_LABEL) {
-            confirmAndGenerate();
-          } else {
-            sendMessage(opt);
-          }
+          sendMessage(opt);
         });
         row.appendChild(chip);
       });
@@ -254,14 +244,21 @@
   async function skipCurrentField(button) {
     clearError();
     button.disabled = true;
+    // Usually near-instant, but a skip that completes the checklist now triggers generation
+    // synchronously on the backend (see /skip-field) — same processing indicator sendMessage
+    // uses, so that few-second wait doesn't look like a stall. Generic label since most skips
+    // resolve instantly and aren't actually drafting anything.
+    showProcessingStatus("One moment...");
     try {
       const data = await api.skipField(sessionId);
+      hideProcessingStatus();
       currentData = data;
       currentPhase = data.phase;
       renderMessages(data.messages, data.suggested_options, data.options_multi_select, data.asking_about_field);
       renderDraftForm(data);
       updateStatusBar(data);
     } catch (err) {
+      hideProcessingStatus();
       showError(err.message || "Couldn't skip this. Please try again.");
       button.disabled = false;
     }
@@ -309,11 +306,13 @@
   // A wide pool spanning different departments — four are picked at random each time a fresh
   // job modal opens (see pickRoleChips below) so the opening suggestions don't feel like the
   // same static four options every single time.
+  // Scoped to creator/content roles for now, per an explicit founder decision — the general
+  // hiring flow was asking too many questions; keeping the opening suggestions (and the rest of
+  // the flow, see backend/agent/prompts.py) focused on this one category first.
   const ROLE_CHIP_POOL = [
-    "Software Engineer", "Data Analyst", "Product Manager", "Sales Executive",
-    "Marketing Manager", "UX Designer", "Customer Support Specialist", "Operations Manager",
-    "HR Business Partner", "Financial Analyst", "DevOps Engineer", "Content Writer",
-    "Business Development Manager", "QA Engineer", "Recruiter", "Account Executive",
+    "Video Editor", "Thumbnail Designer", "Content Editor", "Video Producer",
+    "Motion Graphics Designer", "Podcast Editor", "Social Media Manager", "Graphic Designer",
+    "Content Writer", "YouTube Channel Manager",
   ];
 
   function pickRoleChips(count) {
@@ -508,7 +507,12 @@
     const jdVersions = data.jd_versions;
     const hasJd = Boolean(jdVersions && jdVersions["1"]);
 
-    if (!jobState.job_title && !hasJd) {
+    // The draft panel stays on its placeholder state through the whole guided Q&A — it only ever
+    // switches to the filled-in form once a description has actually been drafted (hasJd), never
+    // partway through collection just because job_title (or any other field) exists yet. Chat
+    // itself is the only surface visible while collecting; the panel reveals already-populated,
+    // matching the founder's "collect first, then show the draft" flow.
+    if (!hasJd) {
       draftEmpty.hidden = false;
       draftForm.hidden = true;
       return;
@@ -562,7 +566,12 @@
     const grid1 = document.createElement("div");
     grid1.className = "jm-field-grid";
     grid1.appendChild(
-      fieldRow("Experience Level", jobState.experience, (v) => patchField({ field_updates: { experience: v } }))
+      fieldRow(
+        "Experience Level",
+        jobState.experience,
+        (v) => patchField({ field_updates: { experience: v } }),
+        { select: ["Entry-Level", "Mid-Level", "Senior-Level"] }
+      )
     );
     grid1.appendChild(
       fieldRow(
@@ -777,26 +786,6 @@
         button.disabled = false;
         button.textContent = originalText;
       }
-    }
-  }
-
-  // What the "Generate JD" chip calls — confirms the closing check AND generates in one direct,
-  // non-chat request (see confirm-generate in routes/chat.py). Chip disabling/re-enabling on
-  // error is handled by the caller (the click handler in appendChips), same as every other chip.
-  async function confirmAndGenerate() {
-    clearError();
-    showProcessingStatus("Creating your job description...");
-    try {
-      const data = await api.confirmGenerateJd(sessionId);
-      hideProcessingStatus();
-      currentData = data;
-      currentPhase = data.phase;
-      renderMessages(data.messages, data.suggested_options, data.options_multi_select, data.asking_about_field);
-      renderDraftForm(data);
-      updateStatusBar(data);
-    } catch (err) {
-      hideProcessingStatus();
-      showError(err.message || "Couldn't generate the job description. Please try again.");
     }
   }
 

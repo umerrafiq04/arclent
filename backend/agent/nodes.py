@@ -312,39 +312,14 @@ def analyze_turn(state: GraphState) -> dict:
             else:
                 analysis = analysis.model_copy(
                     update={
-                        "response": _READY_TO_GENERATE_RESPONSE,
+                        "response": _AUTO_GENERATE_RESPONSE,
                         "asking_about_field": None,
-                        "suggested_options": _READY_TO_GENERATE_OPTIONS,
+                        "suggested_options": [],
                         "options_multi_select": False,
                         "enough_information": True,
                     }
                 )
             updates["skipped_checklist_fields"] = list(skipped)
-
-    # Deterministic interpretation of a closing-check reply when it's an EXACT chip click — never
-    # trust the model's own reading here even with the clearer chip wording (see FINAL CLOSING
-    # CHECK in prompts.py), since a yes/no-shaped question next to two options has been observed
-    # live to still occasionally get misread. A chip click always sends the exact label text back
-    # as the user's message, so matching it verbatim is a hard guarantee, not a heuristic.
-    if state.get("closing_check_asked"):
-        last_human_text = ""
-        for m in reversed(state.get("messages") or []):
-            if isinstance(m, HumanMessage):
-                last_human_text = (m.content or "").strip()
-                break
-        normalized = last_human_text.lower()
-        if normalized == _CLOSING_CHECK_MORE_OPTION.lower():
-            analysis = analysis.model_copy(
-                update={
-                    "enough_information": False,
-                    "response": "No problem — what would you like to add?",
-                    "asking_about_field": None,
-                    "suggested_options": [],
-                    "options_multi_select": False,
-                }
-            )
-        elif normalized == _CLOSING_CHECK_READY_OPTION.lower():
-            analysis = analysis.model_copy(update={"enough_information": True})
 
     response_lower = (analysis.response or "").lower()
     is_skills_followup = "?" in response_lower and ("skill" in response_lower or "respons" in response_lower)
@@ -360,7 +335,12 @@ def analyze_turn(state: GraphState) -> dict:
                 analysis.field_updates,
                 [op.model_dump() for op in analysis.list_operations],
             )
-            skipped = set(state.get("skipped_checklist_fields") or [])
+            # Prefer updates["skipped_checklist_fields"] over state's own copy — the stalled-field
+            # override just above can have already force-skipped a field THIS SAME TURN (e.g. the
+            # recruiter's decline was itself the skills-family reply), and state is the turn's
+            # original snapshot, never mutated in place; reading it alone would silently forget
+            # that skip and re-ask about the very field just resolved.
+            skipped = set(updates.get("skipped_checklist_fields", state.get("skipped_checklist_fields") or []))
             next_field = _next_checklist_prompt(prospective_job_state, skipped)
             if next_field:
                 question, field, chips = next_field
@@ -375,9 +355,9 @@ def analyze_turn(state: GraphState) -> dict:
             else:
                 analysis = analysis.model_copy(
                     update={
-                        "response": _READY_TO_GENERATE_RESPONSE,
+                        "response": _AUTO_GENERATE_RESPONSE,
                         "asking_about_field": None,
-                        "suggested_options": _READY_TO_GENERATE_OPTIONS,
+                        "suggested_options": [],
                         "options_multi_select": False,
                         "enough_information": True,
                     }
@@ -388,40 +368,24 @@ def analyze_turn(state: GraphState) -> dict:
     # Never trust enough_information=true at face value: cross-check it against the same
     # deterministic checklist ready_to_generate() relies on. Verified live that the model reaches
     # this point far more often than prompt compliance alone would suggest — it reliably asks
-    # through the original 4 fields, then jumps straight to "Everything's captured", skipping
-    # education/salary/a still-unresolved skills-family question/the closing check entirely despite
-    # explicit instructions covering each. Also verified live that even when the model DOES
-    # spontaneously ask its own closing-style question (enough_information already false, so the
-    # check below wouldn't otherwise fire), it drifts back into a "Yes, I have more to add"-shaped
-    # chip pair despite explicit prompt instructions not to — so a closing-style question is always
-    # replaced with our own canonical wording too, not just a premature "done". This guarantees the
-    # chip text the recruiter actually sees always exactly matches _CLOSING_CHECK_OPTIONS, which is
-    # what lets the exact-match reply interpretation above work at all — a spontaneously-worded pair
-    # from the model can't be reliably matched there.
+    # through the essential fields, then jumps straight to "Everything's captured" while a real
+    # field (or the skills follow-up) is still unresolved. Also catches the model spontaneously
+    # asking its own wrap-up-shaped question ("anything else you'd like to add?") — that's no
+    # longer a real step in the flow at all (see route_after_apply: generation now fires
+    # automatically the instant the checklist resolves, no confirmation ceremony), so any such
+    # phrasing gets swept into the same real-state check below rather than shown to the recruiter.
     response_lower_now = (analysis.response or "").lower()
-    already_past_closing_check = bool(state.get("closing_check_asked"))
-    # Before the one-time closing check has happened, only a wrap-up question that explicitly
-    # mentions generating counts — a vague "anything else?" earlier in collection (e.g. mid a
-    # skills follow-up) is legitimate and must not be swept in here. AFTER it's already happened,
-    # widen the net: the ONE-TIME rule (see FINAL CLOSING CHECK in prompts.py) means the model is
-    # never supposed to ask another wrap-up-shaped question at all past that point — verified live
-    # it sometimes does anyway (e.g. after "Add More" + new details: "Got it, noted! ... Anything
-    # else you'd like to add?" with its own ad-hoc ["That's all", "Add more"] pair) — so ANY
-    # "anything else?"/"add more?" phrasing at that stage is presumed to be exactly that violation.
     looks_like_closing_check = "?" in response_lower_now and (
-        ("generate" in response_lower_now and ("add more" in response_lower_now or "anything else" in response_lower_now or "ready" in response_lower_now))
-        or (already_past_closing_check and ("anything else" in response_lower_now or "add more" in response_lower_now or "add anything" in response_lower_now))
+        "anything else" in response_lower_now or "add more" in response_lower_now or "add anything" in response_lower_now
+        or ("generate" in response_lower_now and "ready" in response_lower_now)
     )
     # A DECLARATIVE "you're ready" announcement (no question mark at all) is just as real a miss —
     # verified live: "Everything's captured for this role, Alex — click 'Generate Full Description'
     # in the panel on the right whenever you're ready!" sailed straight through with
-    # enough_information left false and no chip, because it never posed a question and the model's
-    # own enough_information flag didn't match what the text was actually saying. The Generate
-    # button being correctly disabled at that exact moment (ready_to_generate() never trusts this
-    # text either) only made it worse — the recruiter was told to click something that didn't work
-    # yet, with no chip offering the one thing that actually would. Catching this text pattern
-    # regardless of punctuation is what routes it into the SAME closing-check/ready normalization
-    # below instead of passing the model's inconsistent statement straight through.
+    # enough_information left false, because it never posed a question and the model's own
+    # enough_information flag didn't match what the text was actually saying. Catching this text
+    # pattern regardless of punctuation routes it into the same real-state check below instead of
+    # passing the model's inconsistent statement straight through.
     looks_like_ready_statement = any(
         phrase in response_lower_now
         for phrase in (
@@ -438,14 +402,13 @@ def analyze_turn(state: GraphState) -> dict:
         )
     )
     looks_like_closing_check = looks_like_closing_check or looks_like_ready_statement
-    # This entire "getting ready to generate for the FIRST time" mechanism (the closing check, the
-    # company context check, the ready+"Generate JD" normalization) only makes sense before any JD
-    # exists yet. Verified live: once a draft was already generated and the recruiter approved it
-    # ("Looks good!"), this override still fired and told them "Everything's captured — ready to
-    # generate the full job description?" with a Generate JD chip — confusing and backward, since a
-    # description already exists; regenerating/refining/publishing are the only real next steps at
-    # that point, and the existing REQUEST_REFINEMENT/CONFIRM_PUBLISH prompt guidance already covers
-    # them correctly on its own — this block must get out of the way entirely once jd_versions exist.
+    # This entire "checklist just finished, about to auto-generate" mechanism only makes sense
+    # before any JD exists yet. Verified live: once a draft was already generated and the recruiter
+    # approved it ("Looks good!"), an earlier version of this override still fired and told them
+    # "Everything's captured — ready to generate?" — confusing and backward, since a description
+    # already exists; regenerating/refining/publishing are the only real next steps at that point,
+    # and the existing REQUEST_REFINEMENT/CONFIRM_PUBLISH prompt guidance already covers them
+    # correctly on its own — this block must get out of the way entirely once jd_versions exist.
     jd_already_exists = bool(state.get("jd_versions"))
     if not jd_already_exists and (analysis.enough_information or looks_like_closing_check):
         prospective_job_state = apply_field_changes(
@@ -454,12 +417,12 @@ def analyze_turn(state: GraphState) -> dict:
             [op.model_dump() for op in analysis.list_operations],
         )
         if hard_floor_met(prospective_job_state):
-            skipped = set(state.get("skipped_checklist_fields") or [])
+            # See the skills-loop-cap override above for why this prefers updates over state.
+            skipped = set(updates.get("skipped_checklist_fields", state.get("skipped_checklist_fields") or []))
             next_field = _next_checklist_prompt(prospective_job_state, skipped)
-            if next_field and analysis.enough_information:
-                # Model thinks it's done but a real field is still unresolved — same fix pattern as
-                # the skills-loop-cap override above, just triggered by "declared done too early"
-                # instead of "asked about skills too many times."
+            if next_field:
+                # Model thinks it's done (or asked its own wrap-up question) but a real field is
+                # still unresolved — same fix pattern as the skills-loop-cap override above.
                 question, field, chips = next_field
                 analysis = analysis.model_copy(
                     update={
@@ -470,68 +433,14 @@ def analyze_turn(state: GraphState) -> dict:
                         "enough_information": False,
                     }
                 )
-            elif (
-                next_field is None
-                and not _company_context_present(state.get("company_profile") or {}, prospective_job_state)
-                and not state.get("company_context_check_asked")
-                and analysis.intent != Intent.FINISH_COLLECTING
-            ):
-                # Checklist done, but there's genuinely no company narrative context anywhere
-                # (neither the company profile nor a job-specific override) — ask ONCE, before the
-                # closing check, rather than silently generating a generic-sounding JD and later
-                # telling the recruiter "nothing is missing" if they ask (see COMPANY CONTEXT CHECK
-                # in prompts.py — verified live the model reliably skips this prompt-only guidance
-                # on its own, same "don't trust prompt compliance alone" lesson as everywhere else
-                # in this function). No suggested_options here — this is open-ended (there's no
-                # small fixed answer set the way work_mode/experience have), so just the dedicated
-                # Skip button plus free text, same pattern as the skills-family fields' fallback.
+            else:
+                # Checklist is genuinely complete — no confirmation ceremony, no chip: announce it
+                # and let route_after_apply route straight into generate_jd this same turn.
                 analysis = analysis.model_copy(
                     update={
-                        "response": _COMPANY_CONTEXT_CHECK_RESPONSE,
-                        "asking_about_field": "company_context",
+                        "response": _AUTO_GENERATE_RESPONSE,
+                        "asking_about_field": None,
                         "suggested_options": [],
-                        "options_multi_select": False,
-                        "enough_information": False,
-                    }
-                )
-                updates["company_context_check_asked"] = True
-            elif next_field is None and not state.get("closing_check_asked") and analysis.intent != Intent.FINISH_COLLECTING:
-                # Checklist is genuinely complete and the closing check hasn't run yet — ask it with
-                # OUR wording, whether the model tried to skip it outright or just phrased its own
-                # version of it, UNLESS the recruiter's own message this turn was already an
-                # explicit finish phrase (that already answers "anything else?" on its own — see
-                # FINAL CLOSING CHECK in prompts.py).
-                analysis = analysis.model_copy(
-                    update={
-                        "response": _CLOSING_CHECK_RESPONSE,
-                        "asking_about_field": None,
-                        "suggested_options": _CLOSING_CHECK_OPTIONS,
-                        "options_multi_select": False,
-                        "enough_information": False,
-                    }
-                )
-                updates["closing_check_asked"] = True
-            elif next_field is None and (already_past_closing_check or analysis.intent == Intent.FINISH_COLLECTING):
-                # Checklist complete AND (the one-time closing check already ran earlier in this
-                # conversation, OR the recruiter just gave an explicit finish phrase — which always
-                # means "ready" regardless of whether the ceremonial closing check ever actually
-                # fired, e.g. if an earlier turn's "ready" announcement failed to trigger it, same
-                # bug this whole block exists to catch). ANY turn that reaches here (whether the
-                # model declared enough_information=true, or just asked its own
-                # not-supposed-to-happen "anything else?" follow-up) gets forced to our canonical
-                # "ready to generate" text + the "Generate JD" chip, unconditionally. Never trust
-                # the model's own phrasing or judgment for this specific moment: verified live that
-                # several different paths (the skills-loop-cap fallback, the stalled-field fallback,
-                # and the model just asking its own wrap-up question again) can all land here, and
-                # without a single, unconditional normalizer, whichever one fired last could leave
-                # the recruiter with an inconsistent or chip-less message — the exact reported bug
-                # (chip sometimes shown, sometimes not, depending on which turn happened to trigger
-                # it).
-                analysis = analysis.model_copy(
-                    update={
-                        "response": _READY_TO_GENERATE_RESPONSE,
-                        "asking_about_field": None,
-                        "suggested_options": _READY_TO_GENERATE_OPTIONS,
                         "options_multi_select": False,
                         "enough_information": True,
                     }
@@ -581,7 +490,7 @@ _BLOCK_LIST_AND_OVERRIDE_VALUES = {i.value for i in INTENTS_BLOCK_LIST_AND_OVERR
 _DEFAULT_OPTIONS_BY_FIELD = {
     "work_mode": ["Remote", "Hybrid", "Onsite"],
     "employment_type": ["Full-time", "Part-time", "Contract", "Internship"],
-    "experience": ["0-1 years", "2-3 years", "4-6 years", "7+ years"],
+    "experience": ["Entry-Level", "Mid-Level", "Senior-Level"],
     "education": ["Bachelor's degree", "Master's degree", "Not required"],
 }
 
@@ -625,6 +534,18 @@ _EMPLOYMENT_TYPE_KEYWORDS = (
 )
 
 
+def _years_to_experience_band(years: int) -> str:
+    """Maps a raw years figure to the app's qualitative experience vocabulary (Entry/Mid/Senior),
+    keeping job_state.experience uniformly in that vocabulary even when a recruiter free-types a
+    year count instead of using the dropdown default/chip.
+    """
+    if years <= 2:
+        return "Entry-Level"
+    if years <= 6:
+        return "Mid-Level"
+    return "Senior-Level"
+
+
 def _extract_fact_backstop(text: str) -> dict:
     """Best-effort, deterministic extraction of experience/work_mode/employment_type from raw
     recruiter text — called from apply_updates to fill in whatever the model's own field_updates
@@ -637,11 +558,11 @@ def _extract_fact_backstop(text: str) -> dict:
     found: dict = {}
     range_match = _EXPERIENCE_RANGE_RE.search(text)
     if range_match:
-        found["experience"] = f"{range_match.group(1)}-{range_match.group(2)} years"
+        found["experience"] = _years_to_experience_band(int(range_match.group(1)))
     else:
         single_match = _EXPERIENCE_SINGLE_RE.search(text)
         if single_match:
-            found["experience"] = f"{single_match.group(1)}{single_match.group(2)} years"
+            found["experience"] = _years_to_experience_band(int(single_match.group(1)))
     for pattern, label in _WORK_MODE_KEYWORDS:
         if pattern.search(text):
             found["work_mode"] = label
@@ -684,29 +605,29 @@ def _find_fresher_experience_contradiction(text: str) -> tuple[str, str] | None:
     return None
 
 
+# Shrunk to just what's still actually ASKED, per an explicit founder decision (the general flow
+# was asking too many questions): required_skills/responsibilities stay only as a hard-floor safety
+# net (see _apply_default_field_values below for why they're not proactively interrogated either —
+# the model is expected to auto-generate them from the role and only offer one "want to add more?"
+# follow-up), then location, work_mode, and salary are the only genuinely-still-asked fields.
+# preferred_skills/experience/employment_type/education are no longer checklist items at all —
+# preferred_skills is auto-generated the same way as required_skills, and experience/employment_type
+# /education are deterministically defaulted (see _apply_default_field_values), never asked.
 _CHECKLIST_ORDER = [
     "required_skills",
     "responsibilities",
-    "preferred_skills",
-    "experience",
     "location",
     "work_mode",
-    "employment_type",
-    "education",
     "salary",
 ]
 _CHECKLIST_QUESTIONS = {
     "required_skills": "What are the required skills a candidate should have for this role?",
     "responsibilities": "What will this person be responsible for day-to-day?",
-    "preferred_skills": "Would you like to add any preferred (nice-to-have) skills for this role?",
-    "experience": "How many years of experience should this role require?",
     "location": 'Which city or region will this role be based in? You can also say "Worldwide" if it\'s fully remote.',
     "work_mode": "Should this role be Remote, Hybrid, or Onsite?",
-    "employment_type": "Should this be a Full-time, Part-time, Contract, or Internship position?",
-    "education": "What's the minimum education level for this role, if any?",
     "salary": "What's the salary range for this role, if you'd like to share one?",
 }
-# Empty, not ["Skip"], for the four fields with no other canonical answer set: every caller of
+# Empty, not ["Skip"], for the fields with no other canonical answer set: every caller of
 # _next_checklist_prompt (the skills-cap override, _fallback_turn_analysis, and the /skip-field
 # endpoint) also sets asking_about_field to this same field, which already renders a dedicated
 # "Skip this" button — a chip whose ONLY content is a second, differently-styled "Skip" duplicates
@@ -714,58 +635,39 @@ _CHECKLIST_QUESTIONS = {
 _CHECKLIST_CHIPS = {
     "required_skills": [],
     "responsibilities": [],
-    "preferred_skills": [],
-    "experience": _DEFAULT_OPTIONS_BY_FIELD["experience"],
     "location": ["Worldwide", "New York", "London", "Bangalore"],
     "work_mode": _DEFAULT_OPTIONS_BY_FIELD["work_mode"],
-    "employment_type": _DEFAULT_OPTIONS_BY_FIELD["employment_type"],
-    "education": _DEFAULT_OPTIONS_BY_FIELD["education"],
     "salary": [],
 }
-# The FINAL CLOSING CHECK question from prompts.py, mirrored here so analyze_turn can ask it
-# deterministically when the model skips straight past it (verified live: the model reliably walks
-# the checklist far enough to satisfy the hard floor, then jumps straight to "Everything's
-# captured" without ever asking this) and so a chip click on it can be interpreted deterministically
-# rather than trusting the model to read "Not yet, I have more to add" correctly every time. Keep
-# these three strings in sync with the FINAL CLOSING CHECK section of SYSTEM_PROMPT_TEMPLATE.
-_CLOSING_CHECK_RESPONSE = "Would you like to add more, or shall I generate the job description?"
-_CLOSING_CHECK_READY_OPTION = "Generate JD"
-_CLOSING_CHECK_MORE_OPTION = "Add More"
-_CLOSING_CHECK_OPTIONS = [_CLOSING_CHECK_READY_OPTION, _CLOSING_CHECK_MORE_OPTION]
 
-# Every OTHER "the checklist is done" announcement (the skills-loop-cap fallback, the stalled-field
-# fallback, _fallback_turn_analysis, and /skip-field's own final branch) — i.e. every such moment
-# that ISN'T the one-time FINAL CLOSING CHECK question itself. Verified live this was the actual
-# reported bug: the recruiter reached this exact "click Generate Full Description in the panel"
-# text with NO chip at all after the real closing check had already fired once earlier in the same
-# conversation, making the chat flow feel inconsistent (chip sometimes offered, sometimes not).
-# Rephrased as a real question (not a bare statement) because apply_updates strips
-# suggested_options from any turn that isn't posing a question — a bare statement here would
-# silently eat the chip regardless of what this constant sets it to.
-_READY_TO_GENERATE_RESPONSE = "Everything's captured for this role — ready to generate the full job description?"
-_READY_TO_GENERATE_OPTIONS = [_CLOSING_CHECK_READY_OPTION]
-
-# The narrative company fields the JD draws on for company-context sections — either at the
-# COMPANY PROFILE level (set once, reused across every job) or as a job-specific override.
-_COMPANY_CONTEXT_FIELDS = ["company_overview", "company_culture", "benefits", "work_life_balance", "why_join_us"]
-_COMPANY_CONTEXT_CHECK_RESPONSE = (
-    "Would you like to add some company context for this posting — like a quick overview, your "
-    "culture, or benefits — or should we keep it generic?"
-)
+# Deterministically defaulted the moment a job_title exists, never asked about at all — per the
+# same founder decision as the shrunk checklist above. The recruiter can still change any of these
+# via chat (a normal field_updates edit) or the draft panel's own dropdown for each.
+_DEFAULT_FIELD_VALUES = {
+    "experience": "Mid-Level",
+    "employment_type": "Full-time",
+    "education": "Bachelor's degree",
+}
 
 
-def _company_context_present(company_profile: dict, job_state: dict) -> bool:
-    """True once there's SOME real company narrative context to draw from for this job — checked
-    at generation time by the JD prompt's own "job-specific override if present, else the company
-    profile field, else omit" rule, but checked here too so the COMPANY CONTEXT CHECK (see
-    prompts.py) only ever fires when it's genuinely all missing in BOTH places, never when
-    there's already something for the JD to work with.
+def _apply_default_field_values(job_state: dict) -> dict:
+    """Fills experience/employment_type/education with their standing defaults the moment
+    job_title exists and they're still empty — never overwrites a real value (the recruiter's own
+    or an earlier default), so this is idempotent and safe to call on every turn.
     """
-    company_profile = company_profile or {}
-    if any(company_profile.get(f) for f in _COMPANY_CONTEXT_FIELDS):
-        return True
-    overrides = job_state.get("company_overrides") or {}
-    return any(overrides.get(f) for f in _COMPANY_CONTEXT_FIELDS)
+    if not job_state.get("job_title"):
+        return job_state
+    result = dict(job_state)
+    for field, default_value in _DEFAULT_FIELD_VALUES.items():
+        if not result.get(field):
+            result[field] = default_value
+    return result
+# The moment the standard checklist (location/work_mode/salary, plus the one-time skills
+# follow-up) resolves, generation now fires automatically — no manual confirmation ceremony, no
+# "Generate JD" chip to click (see route_after_apply's ready_to_generate() auto-route). This is
+# just the announcement text for that instant; the actual draft appears a few seconds later via
+# the same turn's generate_jd node.
+_AUTO_GENERATE_RESPONSE = "Perfect — that's everything I need. Drafting your job post now..."
 
 
 def _next_checklist_prompt(job_state: dict, skipped: set[str] | None = None) -> tuple[str, str, list[str]] | None:
@@ -813,8 +715,7 @@ def _fallback_turn_analysis(state: GraphState) -> TurnAnalysis:
         return TurnAnalysis(
             intent=Intent.CHITCHAT_OR_UNCLEAR,
             enough_information=True,
-            response=_READY_TO_GENERATE_RESPONSE,
-            suggested_options=_READY_TO_GENERATE_OPTIONS,
+            response=_AUTO_GENERATE_RESPONSE,
         )
     return TurnAnalysis(intent=Intent.CHITCHAT_OR_UNCLEAR, enough_information=False, response=FALLBACK_RESPONSE)
 
@@ -827,23 +728,17 @@ def checklist_resolved(job_state: dict, skipped: set[str] | None = None) -> bool
 
 def ready_to_generate(state: GraphState) -> bool:
     """Hard floor (title + skills-or-responsibilities) is necessary but not sufficient for
-    generation — without also requiring the standard checklist to be resolved, the JD generation
-    prompt ends up working from a job_state thin enough that its own "role-standard enrichment"
-    instructions invent specifics the recruiter never gave (a degree requirement, a certification,
-    a year count). This is the single source of truth for both the "Generate Full Description"
-    button's enabled state and the direct /generate endpoint's own guard — never rely on the LLM's
-    own judgment (or the UI simply being clickable) as proof enough information was collected.
+    generation — without also requiring the standard checklist (location/work_mode/salary) to be
+    resolved, the JD generation prompt ends up working from a job_state thin enough that its own
+    "role-standard enrichment" instructions invent specifics the recruiter never gave. This is the
+    single source of truth for: route_after_apply's auto-generate trigger (the instant this flips
+    true for the first time, generation fires with no manual confirmation needed), the Regenerate
+    button's enabled state, and the direct /generate endpoint's own guard.
 
-    The checklist resolving isn't the last word either: the FINAL CLOSING CHECK (see prompts.py)
-    still needs to have actually been asked AND answered with readiness — without requiring
-    closing_check_confirmed too, the button would enable the instant the last checklist field
-    resolves (e.g. a Skip click), before the recruiter ever saw or answered "anything else, or are
-    you ready?".
-
-    Already-published jobs are grandfathered past both checks: editing an existing, previously
-    -complete job (job_id is set) shouldn't suddenly re-gate Regenerate just because this thread's
-    own skipped_checklist_fields/closing_check_confirmed are empty (hydrated from the DB row, not
-    derived from live chat) — only fresh, not-yet-published drafts enforce either one.
+    Already-published jobs are grandfathered past the checklist check: editing an existing,
+    previously-complete job (job_id is set) shouldn't suddenly re-gate Regenerate just because this
+    thread's own skipped_checklist_fields is empty (hydrated from the DB row, not derived from live
+    chat) — only fresh, not-yet-published drafts enforce it.
     """
     job_state = state.get("job_state") or {}
     if not hard_floor_met(job_state):
@@ -851,9 +746,7 @@ def ready_to_generate(state: GraphState) -> bool:
     if state.get("job_id") is not None:
         return True
     skipped = set(state.get("skipped_checklist_fields") or [])
-    if not checklist_resolved(job_state, skipped):
-        return False
-    return bool(state.get("closing_check_confirmed"))
+    return checklist_resolved(job_state, skipped)
 
 
 # Last-resort keyword sniffing on the response TEXT — the model sometimes spells options out in
@@ -953,31 +846,13 @@ def apply_updates(state: GraphState, config: RunnableConfig) -> dict:
             if not job_state.get(field):
                 job_state[field] = value
 
+    # Deterministic defaults (experience/employment_type/education) — see _apply_default_field_values.
+    # Applied AFTER the fact backstop above so a recruiter-stated or extracted value always wins;
+    # this only ever fills in what's still genuinely empty once job_title exists.
+    job_state = _apply_default_field_values(job_state)
+
     llm_enough = bool(analysis.get("enough_information"))
     llm_missing = analysis.get("missing_essential") or []
-
-    # Monotonic, like skipped_checklist_fields: once the closing check has actually been asked AND
-    # answered with enough_information=true on some LATER turn (never the same turn it was first
-    # asked — analyze_turn always forces enough_information=false on that turn), remember it. This
-    # is what ready_to_generate() requires in addition to the checklist itself — without it, the
-    # Generate button would enable the instant the last checklist field resolves (e.g. via a Skip
-    # click), before the recruiter ever actually answered "anything else, or are you ready?".
-    # Reading the final, already-cross-checked enough_information here (rather than re-deriving
-    # "did they mean ready" ourselves) is safe: every path that could set it true on a
-    # closing-check-in-progress turn has already been forced through analyze_turn's exact-match chip
-    # interpretation or its own prompt-compliance check, not trusted blind. An explicit finish phrase
-    # (FINISH_COLLECTING) counts too even if the closing check was never asked at all — that's the
-    # documented exception in FINAL CLOSING CHECK (prompts.py): a finish phrase already answers
-    # "anything else?" on its own, so it shouldn't leave the gate stuck waiting for a question that,
-    # by design, never gets asked in that case.
-    closing_check_confirmed = bool(state.get("closing_check_confirmed"))
-    if intent == Intent.FINISH_COLLECTING.value:
-        # Same trust level the phase="summary" transition below already gives FINISH_COLLECTING
-        # without double-checking enough_information — ready_to_generate() separately re-verifies
-        # hard_floor_met + checklist_resolved regardless, so this alone can never unlock the button.
-        closing_check_confirmed = True
-    elif state.get("closing_check_asked") and llm_enough:
-        closing_check_confirmed = True
 
     ok = sufficiency_ok(job_state, llm_enough, llm_missing)
     missing = combined_missing_essential(job_state, llm_missing)
@@ -1152,7 +1027,6 @@ def apply_updates(state: GraphState, config: RunnableConfig) -> dict:
         "suggested_options": suggested_options,
         "options_multi_select": options_multi_select,
         "skipped_checklist_fields": list(skipped_checklist_fields),
-        "closing_check_confirmed": closing_check_confirmed,
     }
 
 
@@ -1335,14 +1209,15 @@ def route_after_apply(state: GraphState) -> str:
     if intent == Intent.REQUEST_REFINEMENT.value and jd_versions and state.get("selected_version"):
         return "refine_jd"
 
-    # Generation is deliberately NEVER routed here, regardless of intent — collecting job
-    # details is the bot's job, but actually calling the model to WRITE the description only
-    # ever happens via the direct POST /api/chat/{session_id}/generate endpoint the "Generate
-    # Full Description"/"Regenerate" button calls, never as a side effect of a chat turn (see
-    # the REQUEST_JD_GENERATION / FINISH_COLLECTING prompt guidance: a chat "generate it now" or
-    # a finish phrase gets acknowledged and pointed at the button, but the graph itself takes no
-    # action). Same principle as publishing below — the recruiter presses a real button for both
-    # of the two consequential, hard-to-undo-cheaply actions in this flow.
+    # First-time generation now fires automatically the instant the standard checklist resolves —
+    # no manual "Generate JD" click, no confirmation ceremony (per the founder's creator-role
+    # pivot: the flow should draft the job post itself once everything essential is collected).
+    # Guarded on `not jd_versions` so this can only ever fire once per conversation: the moment
+    # generate_jd runs, jd_versions gets populated in this same turn's committed state, so no
+    # later turn can re-trigger it — Regenerate after that point is always a deliberate, explicit
+    # action via the direct /generate endpoint, never a side effect here.
+    if not jd_versions and ready_to_generate(state):
+        return "generate_jd"
 
     # Publishing is deliberately NEVER routed here either — it only ever happens via the direct
     # POST /api/chat/{session_id}/publish endpoint the "Publish Job" button calls (see the
