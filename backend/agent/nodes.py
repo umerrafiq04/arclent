@@ -284,7 +284,7 @@ def analyze_turn(state: GraphState) -> dict:
     # it failed to recognize. Detect via TEXT similarity to the bot's own last message (a genuinely
     # new question is never near-identical to the one right before it) rather than relying on the
     # model to have correctly re-set asking_about_field — same "cap repeated asks deterministically,
-    # don't trust the model to stop on its own" philosophy as _SKILLS_FOLLOWUP_CAP below. Skipped
+    # don't trust the model to stop on its own" philosophy as the skills-followup redirect below. Skipped
     # entirely when the implausible-value check above just fired: THAT block deliberately re-asks
     # the same field on purpose (to confirm a suspicious value), which looks identical to a stall
     # from here — without this guard the two overrides fight each other and the implausible-value
@@ -339,49 +339,69 @@ def analyze_turn(state: GraphState) -> dict:
                 )
             updates["skipped_checklist_fields"] = list(skipped)
 
+    # Skills/responsibilities are auto-generated and NEVER asked about at all — not even the single
+    # "Would you like to add any additional skills?" follow-up this used to allow once. Verified
+    # live that prompt compliance alone wasn't reliable here either (same lesson as everywhere else
+    # in this file): if the model asks that follow-up anyway, redirect it immediately, on the very
+    # first occurrence, straight to the real next checklist item (or auto-generate if nothing's
+    # left) — never let it reach the recruiter, not even once.
+    #
+    # Must match the SPECIFIC "want to add more?" phrasing, not just any sentence that happens to
+    # mention "skill"/"respons" near a question mark — the model's own CORRECT combined turn ("I've
+    # set Premiere Pro and After Effects as required skills... Which city will this be based in?")
+    # also contains both, and a bare keyword+"?" match was swallowing that whole legitimate message
+    # (including the description of what was actually generated) and replacing it with a generic
+    # "Got it, noted!" — silently hiding from the recruiter what skills/responsibilities got set.
     response_lower = (analysis.response or "").lower()
-    is_skills_followup = "?" in response_lower and ("skill" in response_lower or "respons" in response_lower)
-    followup_count = state.get("skills_followup_count", 0)
+    is_skills_followup = "?" in response_lower and any(
+        phrase in response_lower
+        for phrase in (
+            "additional skill",
+            "any other skill",
+            "more skill",
+            "further skill",
+            "additional responsibilit",
+            "any other responsibilit",
+            "more responsibilit",
+            "add any skill",
+            "add more skill",
+        )
+    )
     if is_skills_followup:
-        if followup_count >= _SKILLS_FOLLOWUP_CAP:
-            # Cap already hit — deterministically override the response instead of asking about
-            # skills/responsibilities yet again. Merge in this turn's own field_updates first so a
-            # message that named a field (e.g. "Add Python, and it's hybrid") isn't immediately
-            # re-asked about.
-            prospective_job_state = apply_field_changes(
-                state.get("job_state") or {},
-                analysis.field_updates,
-                [op.model_dump() for op in analysis.list_operations],
+        # Merge in this turn's own field_updates first so a message that named a field (e.g. "Add
+        # Python, and it's hybrid") isn't immediately re-asked about.
+        prospective_job_state = apply_field_changes(
+            state.get("job_state") or {},
+            analysis.field_updates,
+            [op.model_dump() for op in analysis.list_operations],
+        )
+        # Prefer updates["skipped_checklist_fields"] over state's own copy — the stalled-field
+        # override just above can have already force-skipped a field THIS SAME TURN (e.g. the
+        # recruiter's decline was itself the skills-family reply), and state is the turn's
+        # original snapshot, never mutated in place; reading it alone would silently forget
+        # that skip and re-ask about the very field just resolved.
+        skipped = set(updates.get("skipped_checklist_fields", state.get("skipped_checklist_fields") or []))
+        next_field = _next_checklist_prompt(prospective_job_state, skipped)
+        if next_field:
+            question, field, chips = next_field
+            analysis = analysis.model_copy(
+                update={
+                    "response": f"Got it, noted! {question}",
+                    "asking_about_field": field,
+                    "suggested_options": chips,
+                    "options_multi_select": False,
+                }
             )
-            # Prefer updates["skipped_checklist_fields"] over state's own copy — the stalled-field
-            # override just above can have already force-skipped a field THIS SAME TURN (e.g. the
-            # recruiter's decline was itself the skills-family reply), and state is the turn's
-            # original snapshot, never mutated in place; reading it alone would silently forget
-            # that skip and re-ask about the very field just resolved.
-            skipped = set(updates.get("skipped_checklist_fields", state.get("skipped_checklist_fields") or []))
-            next_field = _next_checklist_prompt(prospective_job_state, skipped)
-            if next_field:
-                question, field, chips = next_field
-                analysis = analysis.model_copy(
-                    update={
-                        "response": f"Got it, noted! {question}",
-                        "asking_about_field": field,
-                        "suggested_options": chips,
-                        "options_multi_select": False,
-                    }
-                )
-            else:
-                analysis = analysis.model_copy(
-                    update={
-                        "response": _AUTO_GENERATE_RESPONSE,
-                        "asking_about_field": None,
-                        "suggested_options": [],
-                        "options_multi_select": False,
-                        "enough_information": True,
-                    }
-                )
         else:
-            updates["skills_followup_count"] = followup_count + 1
+            analysis = analysis.model_copy(
+                update={
+                    "response": _AUTO_GENERATE_RESPONSE,
+                    "asking_about_field": None,
+                    "suggested_options": [],
+                    "options_multi_select": False,
+                    "enough_information": True,
+                }
+            )
 
     # Never trust enough_information=true at face value: cross-check it against the same
     # deterministic checklist ready_to_generate() relies on. Verified live that the model reaches
@@ -512,20 +532,6 @@ _DEFAULT_OPTIONS_BY_FIELD = {
     "education": ["Bachelor's degree", "Master's degree", "Not required"],
 }
 
-# Prompt-only compliance for "ask about skills/responsibilities at most once" proved unreliable in
-# practice — the model kept re-asking "anything else?" after every single skill the recruiter
-# named, sometimes 10+ times in a row (each one a Mistral call, compounding rate-limit risk on top
-# of the frustration). SKILLS_FOLLOWUP_CAP deterministically cuts that off in analyze_turn below:
-# once this many skills/responsibilities-flavored questions have been asked across the whole
-# conversation, any further one gets swapped for a canned pivot to the next unresolved standard
-# checklist field instead of trusting the model to stop on its own. Set to 3, not lower: required
-# skills, preferred skills, and responsibilities are each a MANDATORY once-only ask (see the
-# "skills-family follow-ups" section of SYSTEM_PROMPT_TEMPLATE) — a cap of 2 would sweep the
-# legitimate 3rd question into this override and rob it of the model's own contextual chip
-# suggestions (real skill/tool names) in favor of a generic canned "Skip" fallback. Only a genuine
-# 4th+ skill-flavored question — an actual runaway loop — should ever hit this cap.
-_SKILLS_FOLLOWUP_CAP = 3
-
 # A generous ceiling, not a strict range — only meant to catch an obvious fat-finger/misread (a
 # recruiter meaning "2-3 years" landing as "223") before it's silently stored as job_state. Real
 # postings asking for up to a few decades of experience should never be second-guessed.
@@ -626,23 +632,27 @@ def _find_fresher_experience_contradiction(text: str) -> tuple[str, str] | None:
 # Shrunk to just what's still actually ASKED, per an explicit founder decision (the general flow
 # was asking too many questions): required_skills/responsibilities stay only as a hard-floor safety
 # net (see _apply_default_field_values below for why they're not proactively interrogated either —
-# the model is expected to auto-generate them from the role and only offer one "want to add more?"
-# follow-up), then location, work_mode, and salary are the only genuinely-still-asked fields.
-# preferred_skills/experience/employment_type/education are no longer checklist items at all —
-# preferred_skills is auto-generated the same way as required_skills, and experience/employment_type
-# /education are deterministically defaulted (see _apply_default_field_values), never asked.
+# the model is expected to auto-generate them from the role and never ask about them at all), then
+# location and salary are the only genuinely-still-asked fields. preferred_skills/experience/
+# employment_type/education are no longer checklist items at all — preferred_skills is auto-generated
+# the same way as required_skills, and experience/employment_type/education are deterministically
+# defaulted (see _apply_default_field_values), never asked. work_mode is ALSO never proactively asked
+# (same founder decision) but, unlike experience/employment_type/education, has no safe universal
+# default — Remote/Hybrid/Onsite is a material, candidate-facing fact that genuinely varies per
+# role, so guessing one would risk actively misleading a candidate rather than just being generic.
+# It simply stays unset unless the recruiter volunteers it (still captured via normal field_updates
+# extraction or the fact-backstop below if they do) — the JD generation prompt already omits any
+# meta line it doesn't have real data for rather than inventing one.
 _CHECKLIST_ORDER = [
     "required_skills",
     "responsibilities",
     "location",
-    "work_mode",
     "salary",
 ]
 _CHECKLIST_QUESTIONS = {
     "required_skills": "What are the required skills a candidate should have for this role?",
     "responsibilities": "What will this person be responsible for day-to-day?",
     "location": 'Which city or region will this role be based in? You can also say "Worldwide" if it\'s fully remote.',
-    "work_mode": "Should this role be Remote, Hybrid, or Onsite?",
     "salary": "What's the salary range for this role, if you'd like to share one?",
 }
 # Empty, not ["Skip"], for the fields with no other canonical answer set: every caller of
@@ -654,24 +664,26 @@ _CHECKLIST_CHIPS = {
     "required_skills": [],
     "responsibilities": [],
     "location": ["Worldwide", "New York", "London", "Bangalore"],
-    "work_mode": _DEFAULT_OPTIONS_BY_FIELD["work_mode"],
     "salary": [],
 }
 
 # Deterministically defaulted the moment a job_title exists, never asked about at all — per the
 # same founder decision as the shrunk checklist above. The recruiter can still change any of these
-# via chat (a normal field_updates edit) or the draft panel's own dropdown for each.
+# via chat (a normal field_updates edit) or the draft panel's own dropdown for each. work_mode
+# defaults to "Remote" specifically per a later founder correction (creator/content roles are
+# commonly remote-friendly) rather than staying unset — same defaulted treatment as the other three.
 _DEFAULT_FIELD_VALUES = {
     "experience": "Mid-Level",
     "employment_type": "Full-time",
     "education": "Bachelor's degree",
+    "work_mode": "Remote",
 }
 
 
 def _apply_default_field_values(job_state: dict) -> dict:
-    """Fills experience/employment_type/education with their standing defaults the moment
-    job_title exists and they're still empty — never overwrites a real value (the recruiter's own
-    or an earlier default), so this is idempotent and safe to call on every turn.
+    """Fills experience/employment_type/education/work_mode with their standing defaults the
+    moment job_title exists and they're still empty — never overwrites a real value (the
+    recruiter's own or an earlier default), so this is idempotent and safe to call on every turn.
     """
     if not job_state.get("job_title"):
         return job_state
@@ -691,11 +703,11 @@ _AUTO_GENERATE_RESPONSE = "Perfect — that's everything I need. Drafting your j
 def _next_checklist_prompt(job_state: dict, skipped: set[str] | None = None) -> tuple[str, str, list[str]] | None:
     """First unresolved, not-yet-skipped field (in standard-checklist order) plus its canned
     question + chips, or None once every field is either set or skipped — used to deterministically
-    pivot away from a capped-out skills/responsibilities follow-up loop (see _SKILLS_FOLLOWUP_CAP)
-    or an explicit "Skip this" click, rather than leaving the recruiter with an acknowledgment and
-    no next question. `skipped` matters: a skipped field's job_state value stays empty by design
-    (that's what skipping means), so without excluding it here this would just re-offer the exact
-    same question forever instead of moving on.
+    pivot away from a skills/responsibilities follow-up the model tried to ask despite never being
+    supposed to, or an explicit "Skip this" click, rather than leaving the recruiter with an
+    acknowledgment and no next question. `skipped` matters: a skipped field's job_state value stays
+    empty by design (that's what skipping means), so without excluding it here this would just
+    re-offer the exact same question forever instead of moving on.
     """
     skipped = skipped or set()
     for field in _CHECKLIST_ORDER:
