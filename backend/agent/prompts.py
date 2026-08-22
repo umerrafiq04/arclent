@@ -317,16 +317,7 @@ JOB DETAILS (describe the position itself — use these as-is EXCEPT job_title, 
 preferred_skills, and responsibilities are the CURRENT job_state lists to proofread, see "PROOFREAD MIRROR" below):
 {job_state_json}
 
-JOB TITLE HEADLINE: job_state.job_title is the recruiter's simple, informal selection (e.g. "Video Editor",
-"Podcast Editor") — for the actual published headline, write a more specific, polished, and appealing title that
-reflects what this posting is actually about, grounded in the real details above (required_skills, responsibilities,
-company profile). E.g. "Video Editor" -> "Cinematic Video Editor for YouTube Channel (Long-form + Shorts)" if the
-skills/responsibilities point that way, or "Podcast Editor" -> "Podcast Editor — Audio Post-Production & Sound
-Design". This is expected and encouraged, not a fabrication to avoid. Stay grounded, though: never change the
-underlying role/job family itself (a Video Editor posting must still read as a Video Editor role, not a Video
-Producer or Motion Graphics Designer one), and never invent a specialty, platform, or niche not actually implied by
-the real job details — the enhancement should read as a natural, more specific version of the same role, not an
-unrelated one.
+{job_title_headline_instruction}
 
 PROOFREAD MIRROR — required_skills, preferred_skills, and responsibilities: output your own required_skills/
 preferred_skills/responsibilities fields as a PURE PROOFREAD of the SAME lists in JOB DETAILS above — fix spelling,
@@ -394,7 +385,8 @@ CURRENT DRAFT (the recruiter has reviewed this, possibly hand-edited some of it 
 top of it, not a rewrite from a blank page and not a frozen, do-not-touch document either):
 {current_jd_json}
 
-How to use the CURRENT DRAFT above:
+How to use the CURRENT DRAFT above (this covers every field EXCEPT job_title — see the JOB TITLE HEADLINE section
+above, which has its own regeneration-specific instruction for the headline):
 - Every specific skill, responsibility, benefit, requirement, or point already present in the CURRENT DRAFT must
   still be present in your output in some form. You may reword it, expand it, move it, or fold it into a fuller
   sentence — but never simply DROP it or swap it out for something unrelated. If in doubt, keep it.
@@ -411,11 +403,52 @@ How to use the CURRENT DRAFT above:
 """
 
 
+_JOB_TITLE_HEADLINE_FIRST_GENERATION = """JOB TITLE HEADLINE: job_state.job_title is the recruiter's simple, informal
+selection (e.g. "Video Editor", "Podcast Editor") — for the actual published headline, write a more specific,
+polished, and appealing title that reflects what this posting is actually about, grounded in the real details above
+(required_skills, responsibilities, company profile). E.g. "Video Editor" -> "Cinematic Video Editor for YouTube
+Channel (Long-form + Shorts)" if the skills/responsibilities point that way, or "Podcast Editor" -> "Podcast Editor —
+Audio Post-Production & Sound Design". This is expected and encouraged, not a fabrication to avoid. Stay grounded,
+though: never change the underlying role/job family itself (a Video Editor posting must still read as a Video Editor
+role, not a Video Producer or Motion Graphics Designer one), and never invent a specialty, platform, or niche not
+actually implied by the real job details — the enhancement should read as a natural, more specific version of the
+same role, not an unrelated one."""
+
+
+# Used instead of the above once a CURRENT DRAFT exists (a regeneration) — a real, live-verified bug: telling the
+# model to "also consider" the current draft's title as a secondary hint alongside the unconditional "write a
+# headline from job_state.job_title" instruction above wasn't enough — it kept re-deriving a fresh headline from
+# job_state.job_title's plain original name and silently reintroducing content the recruiter had deliberately
+# removed (e.g. "Senior"), even when explicitly told not to. This variant REPLACES job_state.job_title as the
+# model's anchor entirely, rather than layering a competing instruction on top of it, so there's no second
+# "official" title left pulling it back toward the original.
+def _job_title_headline_regeneration_instruction(current_title: str, raw_job_title: str | None) -> str:
+    return f"""JOB TITLE HEADLINE: "{current_title}" is this posting's CURRENT published headline — already shown to
+the recruiter, and possibly hand-edited by them since it was first generated (job_state.job_title, "{raw_job_title}",
+is only the ORIGINAL plain name the very first headline was built from — it is NOT the current headline, and is not
+what you're refining here). Refine the CURRENT headline above, don't regenerate a fresh one from scratch:
+- If the recruiter has removed, added, or reworded anything in it (e.g. dropped "Senior," changed a qualifier), that
+  edit is intentional — keep it. Never silently reintroduce a word or qualifier they removed, and never swap back
+  to an earlier, differently-worded version.
+- You may still fix a spelling/grammar mistake in it, or improve clarity/flow slightly, but the headline you output
+  must remain recognizably the SAME headline as the one above, not a new one derived from job_state.job_title.
+- Only meaningfully change it if the job details it was based on have genuinely changed since (a different core
+  role, skill set, or responsibilities than before) — never just because you'd have phrased it differently, and
+  never just to make it match job_state.job_title's plain original wording more closely."""
+
+
 def build_jd_generation_prompt(company_profile: dict, job_state: dict, current_jd: dict | None = None) -> str:
+    current_title = (current_jd or {}).get("job_title")
+    job_title_headline_instruction = (
+        _job_title_headline_regeneration_instruction(current_title, job_state.get("job_title"))
+        if current_jd and current_title
+        else _JOB_TITLE_HEADLINE_FIRST_GENERATION
+    )
     return JD_GENERATION_PROMPT_TEMPLATE.format(
         regeneration_context=_JD_REGENERATION_CONTEXT.format(current_jd_json=json.dumps(current_jd, indent=2))
         if current_jd
         else "",
+        job_title_headline_instruction=job_title_headline_instruction,
         company_profile_json=json.dumps(company_profile or {}, indent=2),
         company_overrides_json=json.dumps(job_state.get("company_overrides") or {}, indent=2),
         job_state_json=json.dumps(
