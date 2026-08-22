@@ -692,6 +692,12 @@ a {
 
 .table-scroll {
   overflow-x: auto;
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none; /* legacy Edge/IE */
+}
+
+.table-scroll::-webkit-scrollbar {
+  display: none; /* Chrome/Safari/Edge — scroll still works, just no visible track */
 }
 
 .admin-table {
@@ -1167,6 +1173,12 @@ a {
   padding: 18px;
   overflow-y: auto;
   min-height: 0;
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none; /* legacy Edge/IE */
+}
+
+#job-panel-body::-webkit-scrollbar {
+  display: none; /* Chrome/Safari/Edge — scroll still works, just no visible track */
 }
 
 .status-row {
@@ -1403,6 +1415,12 @@ a {
   max-height: 420px;
   overflow-y: auto;
   font-size: 13px;
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none; /* legacy Edge/IE */
+}
+
+.jd-card-body::-webkit-scrollbar {
+  display: none; /* Chrome/Safari/Edge — scroll still works, just no visible track */
 }
 
 .jd-field {

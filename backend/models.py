@@ -139,14 +139,21 @@ class TurnAnalysis(BaseModel):
     response: str
 
 
-# required_skills/preferred_skills/responsibilities are deliberately NOT fields here — they live
-# ONLY on JobState (see below) and are rendered directly from there everywhere (the draft panel,
-# the public listing, the published DB row). Earlier this document also generated its own
-# major_accountabilities/minimum_requirements/required_qualifications/preferred_qualifications as
-# a second, independently-enriched copy of the same three concepts — a reported duplication bug
+# required_skills/preferred_skills/responsibilities: JobState (see below) is still the single
+# source of truth for these — the draft panel, the public listing, and the published DB row all
+# read from there, never from this document. Earlier this document ALSO independently generated
+# its own major_accountabilities/minimum_requirements/required_qualifications/preferred_qualifications
+# as a second, independently-enriched copy of the same three concepts — a reported duplication bug
 # (the recruiter saw "Responsibilities" and "Major Accountabilities" as two separate, sometimes
-# inconsistent sections). Removed entirely rather than reconciled: there is now exactly one copy
-# of each, on JobState, single source of truth for editing, generation, and publishing alike.
+# inconsistent sections) — those four fields are gone for good.
+#
+# These three ARE still fields here, though, for a narrower reason: a PROOFREAD MIRROR, not a
+# second copy. See JD_GENERATION_PROMPT_TEMPLATE's PROOFREAD MIRROR section — the model corrects
+# spelling/grammar in JobState's own lists (same item count, same order, same meaning, e.g. "manage
+# smalllll team" -> "Manage small team"), and generate_jd writes the correction directly back into
+# job_state itself (never stored on the saved JD document — see the length-match guard in
+# generate_jd, which discards any output that doesn't preserve item count, so this can never
+# silently add/remove/reorder content, only fix how existing items are spelled).
 class JobDescriptionDraft(BaseModel):
     job_title: str | None = None
     requisition_id: str | None = None
@@ -158,6 +165,9 @@ class JobDescriptionDraft(BaseModel):
     company_overview: str | None = None
     job_summary: str | None = None
     about_role: str | None = None
+    required_skills: list[str] = Field(default_factory=list)
+    preferred_skills: list[str] = Field(default_factory=list)
+    responsibilities: list[str] = Field(default_factory=list)
     stand_out: list[str] = Field(default_factory=list)
     benefits: list[str] = Field(default_factory=list)
     why_company: str | None = None

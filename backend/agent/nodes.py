@@ -111,6 +111,25 @@ def _dedupe_stand_out(jd: dict, job_state: dict) -> dict:
     return result
 
 
+def _apply_proofread_corrections(job_state: dict, corrections: dict) -> dict:
+    """Applies generate_jd's PROOFREAD MIRROR output (spelling/grammar-corrected versions of
+    required_skills/preferred_skills/responsibilities) back onto job_state — the single source of
+    truth for these three, never duplicated onto the JD document itself (see JobDescriptionDraft's
+    comment). Deterministically guarded, not prompt-trusted: a field is only accepted if the
+    correction has the EXACT SAME NUMBER of items as job_state's own current list — a length
+    mismatch means the model added, dropped, split, or merged an item despite being told not to,
+    so that field is left completely untouched rather than risk silently losing or duplicating
+    content. An empty original list has nothing to proofread, so it's always left alone too.
+    """
+    result = dict(job_state)
+    for field in ("required_skills", "preferred_skills", "responsibilities"):
+        original = job_state.get(field) or []
+        corrected = corrections.get(field) or []
+        if original and len(corrected) == len(original):
+            result[field] = [_strip_markdown(v) if isinstance(v, str) else v for v in corrected]
+    return result
+
+
 # These JD fields are supposed to mirror job_state exactly — logistics/identity facts, not prose
 # the model should be paraphrasing (unlike job_title, which is DELIBERATELY left to the model's
 # own polish — see JD_GENERATION_PROMPT_TEMPLATE's headline guidance: "Video Editor" becoming
@@ -1191,12 +1210,32 @@ def generate_jd(state: GraphState, config: RunnableConfig) -> dict:
         )
         return {"messages": [AIMessage(content=response)], "last_response": response}
 
+    output_dict = output.model_dump(mode="json")
+    # The PROOFREAD MIRROR fields (see prompt) never get stored on the JD document itself — only
+    # job_state, its single source of truth, gets corrected — see _apply_proofread_corrections.
+    skills_family_output = {
+        field: output_dict.pop(field, []) for field in ("required_skills", "preferred_skills", "responsibilities")
+    }
+    job_state = _apply_proofread_corrections(job_state, skills_family_output)
+
     jd = _apply_job_state_identity_fields(
-        _dedupe_stand_out(_strip_markdown(output.model_dump(mode="json")), job_state), job_state
+        _dedupe_stand_out(_strip_markdown(output_dict), job_state), job_state
     )
     jd_versions = {"1": jd}
     save_jd_versions(session_id, jd_versions)
     save_selected_version(session_id, "1")
+
+    # job_state may have just been corrected above (typo fixes to required_skills/preferred_skills/
+    # responsibilities) — write it through the same way apply_updates/patch_job_state do, so the
+    # correction survives a page reload, not just this in-memory turn. Drafts only, same guard as
+    # everywhere else: an already-published job's edits stay off the live row until the recruiter
+    # explicitly clicks Publish Edit.
+    is_published_job = state.get("job_id") is not None
+    if not is_published_job and job_state.get("job_title"):
+        company_id = company_profile.get("id")
+        owner_user_id = config["configurable"].get("user_id")
+        if company_id is not None:
+            upsert_job_draft(session_id, company_id, job_state, False, owner_user_id=owner_user_id)
 
     job_title = job_state.get("job_title") or "this role"
     response = (
@@ -1211,6 +1250,7 @@ def generate_jd(state: GraphState, config: RunnableConfig) -> dict:
     # gates publish_edit) rather than the fresh-draft "jd_selection" phase.
     next_phase = "editing" if state.get("job_id") else "jd_selection"
     return {
+        "job_state": job_state,
         "jd_versions": jd_versions,
         "jd_stale": False,
         "selected_version": "1",
@@ -1248,8 +1288,16 @@ def refine_jd(state: GraphState, config: RunnableConfig) -> dict:
         )
         return {"messages": [AIMessage(content=response)], "last_response": response}
 
+    updated_jd_dict = output.updated_jd.model_dump(mode="json")
+    # Same as generate_jd: required_skills/preferred_skills/responsibilities never get stored on
+    # the JD document itself, job_state is their only home. Refine (a chat-driven, instruction-
+    # specific edit like "make it more professional") doesn't proofread job_state's lists the way
+    # Regenerate does — just strip whatever the model returned for these here rather than persist
+    # possibly-stale, unused duplicate content into the saved draft.
+    for field in ("required_skills", "preferred_skills", "responsibilities"):
+        updated_jd_dict.pop(field, None)
     updated_jd = _apply_job_state_identity_fields(
-        _dedupe_stand_out(_strip_markdown(output.updated_jd.model_dump(mode="json")), job_state), job_state
+        _dedupe_stand_out(_strip_markdown(updated_jd_dict), job_state), job_state
     )
     new_jd_versions = dict(jd_versions)
     new_jd_versions[version] = updated_jd

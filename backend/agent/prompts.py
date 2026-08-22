@@ -314,8 +314,7 @@ when present, but never modify or contradict the stored company profile itself):
 {company_overrides_json}
 
 JOB DETAILS (describe the position itself — use these as-is EXCEPT job_title, see below — required_skills,
-preferred_skills, and responsibilities are shown here for CONTEXT ONLY: they are NOT fields of the document you are
-producing, see "NOT PART OF THIS DOCUMENT" below):
+preferred_skills, and responsibilities are the CURRENT job_state lists to proofread, see "PROOFREAD MIRROR" below):
 {job_state_json}
 
 JOB TITLE HEADLINE: job_state.job_title is the recruiter's simple, informal selection (e.g. "Video Editor",
@@ -329,13 +328,22 @@ Producer or Motion Graphics Designer one), and never invent a specialty, platfor
 the real job details — the enhancement should read as a natural, more specific version of the same role, not an
 unrelated one.
 
-NOT PART OF THIS DOCUMENT: required_skills, preferred_skills, and responsibilities are NOT fields you produce —
-they live only on the job details above, are shown to the recruiter directly from there, and are published as-is.
-Do not restate them, summarize them, or produce any equivalent of them (no "accountabilities," "minimum
-requirements," "required qualifications," or "preferred qualifications" sections) — that used to be a real, reported
-bug: the same skills/responsibilities showed up twice, once from job_state and once regenerated slightly differently
-by you, confusing the recruiter about which copy was current. There is exactly one copy now, and it isn't yours to
-write.
+PROOFREAD MIRROR — required_skills, preferred_skills, and responsibilities: output your own required_skills/
+preferred_skills/responsibilities fields as a PURE PROOFREAD of the SAME lists in JOB DETAILS above — fix spelling,
+typos, and grammar only (e.g. "manage smalllll team" -> "Manage small team"), nothing else. Every single item you
+output must:
+- Be in the EXACT SAME ORDER, at the SAME COUNT, as the corresponding job_state list — one output item per input
+  item, always. Never add a new item, never drop one, never split one item into two, never merge two into one.
+- Mean EXACTLY the same thing as the original item. You are correcting HOW it's spelled/written, never WHAT it
+  says — do not rephrase for style, do not make it more detailed or more concise, do not "improve" the idea itself.
+- Be returned completely unchanged if it already has no error — most items usually will.
+This is NOT the place for ROLE-STANDARD ENRICHMENT or any new suggestions (see below for where that belongs) — no
+new skills, no new responsibilities, ever, in these three fields. Do not restate, summarize, or produce any OTHER
+version of this content either (no "accountabilities," "minimum requirements," "required qualifications," or
+"preferred qualifications" sections) — that used to be a real, reported bug: the same skills/responsibilities showed
+up twice, once from job_state and once independently regenerated (and worded differently) by you, confusing the
+recruiter about which copy was current. There is exactly one COPY of this content — job_state's own list — and
+proofreading it in place is the only way you're allowed to touch it.
 
 Tone: professional and clear, comprehensive enough to fully inform a candidate, but written in engaging, modern
 language rather than stiff corporate boilerplate — this is the one draft the recruiter will see, so it should read
