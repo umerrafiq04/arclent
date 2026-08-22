@@ -84,32 +84,30 @@ def _strip_markdown(value):
     return value
 
 
-_JD_DEDUPE_PRIORITY_FIELDS = ["required_skills", "minimum_requirements", "preferred_qualifications", "stand_out"]
-
-
-def _dedupe_jd_lists(jd: dict) -> dict:
-    """The same skill/tool can end up listed in more than one section (e.g. "React" in both
-    required_skills and preferred_qualifications) despite explicit prompt instructions not to —
-    verified this is a realistic model slip, not just a theoretical one, so strip it deterministically
-    rather than rely on prompt compliance alone (same principle as _strip_markdown above). Priority
-    order (highest wins, an exact repeat gets removed from every LOWER section):
-    required_skills > minimum_requirements > preferred_qualifications > stand_out. Case-insensitive
-    EXACT string match only — "React" and "React Native" are different skills and both stay.
+def _dedupe_stand_out(jd: dict, job_state: dict) -> dict:
+    """stand_out is the only place the JD document still generates its own skill-like list — the
+    same skill/tool can end up listed there AND in job_state.required_skills/preferred_skills
+    despite explicit prompt instructions not to (verified this is a realistic model slip, not just
+    theoretical, same principle as _strip_markdown above), which reads as self-contradictory (is it
+    required, preferred, or just a bonus?). Strip it deterministically rather than rely on prompt
+    compliance alone: anything in stand_out that case-insensitive-exact-matches an entry already in
+    job_state's required_skills or preferred_skills gets removed from stand_out (job_state wins —
+    it's the single source of truth for those two, per the founder's de-duplication request).
+    "React" and "React Native" are different skills and both stay.
     """
-    seen_lower: set[str] = set()
+    seen_lower = {
+        item.strip().lower()
+        for field in ("required_skills", "preferred_skills")
+        for item in (job_state.get(field) or [])
+        if isinstance(item, str)
+    }
     result = dict(jd)
-    for field in _JD_DEDUPE_PRIORITY_FIELDS:
-        items = result.get(field) or []
-        if not isinstance(items, list):
-            continue
-        deduped = []
-        for item in items:
-            key = item.strip().lower() if isinstance(item, str) else item
-            if key in seen_lower:
-                continue
-            seen_lower.add(key)
-            deduped.append(item)
-        result[field] = deduped
+    stand_out = result.get("stand_out") or []
+    if isinstance(stand_out, list):
+        result["stand_out"] = [
+            item for item in stand_out
+            if not (isinstance(item, str) and item.strip().lower() in seen_lower)
+        ]
     return result
 
 
@@ -118,7 +116,7 @@ def _dedupe_jd_lists(jd: dict) -> dict:
 # own polish — see JD_GENERATION_PROMPT_TEMPLATE's headline guidance: "Video Editor" becoming
 # "Cinematic Video Editor for YouTube Channel (Long-form + Shorts)" is the intended, requested
 # behavior, not a fabrication to guard against). Same "don't trust prompt compliance for a
-# fact-fidelity guarantee" principle as _dedupe_jd_lists above, just scoped to the fields that
+# fact-fidelity guarantee" principle as _dedupe_stand_out above, just scoped to the fields that
 # actually need it: force these back to job_state's own values deterministically after every
 # generation/refinement instead of hoping the model leaves them untouched.
 _JD_IDENTITY_FIELDS_FROM_JOB_STATE = ("job_category", "employment_type", "location", "work_mode", "deadline")
@@ -1103,16 +1101,25 @@ def _jd_document_message(version: str, jd: dict) -> AIMessage:
 
 def generate_jd(state: GraphState, config: RunnableConfig) -> dict:
     """Generates ONE complete job description draft — not a pair to choose between. Immediately
-    marks it selected (there's nothing to choose), so Publish becomes available right away;
-    "Regenerate" (same REQUEST_JD_GENERATION intent, called again) replaces this single draft
-    with a fresh one, it never creates a second one to pick between.
+    marks it selected (there's nothing to choose), so Publish becomes available right away.
+
+    "Regenerate" (same function, called again once a draft already exists) is NOT a blank-page
+    rewrite — it passes the CURRENT draft into the prompt as a starting point to refresh/improve,
+    so any hand-edits the recruiter made directly in the panel (About the Role, Company Overview,
+    Stand Out, Benefits, etc.) survive a Regenerate instead of being silently discarded in favor of
+    a fresh draft built from job_state alone. See build_jd_generation_prompt's current_jd param.
     """
     company_profile = state.get("company_profile") or {}
     job_state = state.get("job_state") or {}
     session_id = config["configurable"]["thread_id"]
+    jd_versions_existing = state.get("jd_versions") or {}
+    selected_version = state.get("selected_version")
+    current_jd = jd_versions_existing.get(selected_version) if selected_version else None
+    is_regeneration = bool(current_jd)
+    hand_edited_fields = state.get("jd_hand_edited_fields") or []
 
     time.sleep(3)  # this is the 2nd Mistral call in the same turn — avoid bursting past per-second rate limits
-    prompt = build_jd_generation_prompt(company_profile, job_state)
+    prompt = build_jd_generation_prompt(company_profile, job_state, current_jd=current_jd)
     messages = [
         SystemMessage(content=prompt),
         HumanMessage(content="Generate the job description based on the information above."),
@@ -1129,14 +1136,29 @@ def generate_jd(state: GraphState, config: RunnableConfig) -> dict:
         )
         return {"messages": [AIMessage(content=response)], "last_response": response}
 
-    jd = _apply_job_state_identity_fields(_dedupe_jd_lists(_strip_markdown(output.model_dump(mode="json"))), job_state)
+    jd = _apply_job_state_identity_fields(
+        _dedupe_stand_out(_strip_markdown(output.model_dump(mode="json")), job_state), job_state
+    )
+    # The prompt ASKS the model to preserve hand-edited content (see _JD_REGENERATION_CONTEXT),
+    # but prompt compliance alone proved unreliable here too — verified live, a hand-edited
+    # About the Role got fully rewritten anyway on Regenerate despite the instruction. Force it
+    # deterministically: any field the recruiter has ever hand-edited gets restored from the
+    # pre-regeneration draft, unconditionally, regardless of what the model just produced.
+    if is_regeneration and hand_edited_fields:
+        for field in hand_edited_fields:
+            if field in current_jd:
+                jd[field] = current_jd[field]
     jd_versions = {"1": jd}
     save_jd_versions(session_id, jd_versions)
     save_selected_version(session_id, "1")
 
     job_title = job_state.get("job_title") or "this role"
     response = (
-        f"Here's the job description I've drafted for {job_title}. Let me know if you'd like any "
+        f"Here's the refreshed job description for {job_title} — your edits are preserved where "
+        "they still apply. Let me know if you'd like any changes, or click Regenerate again — "
+        "otherwise it's ready to publish."
+        if is_regeneration
+        else f"Here's the job description I've drafted for {job_title}. Let me know if you'd like any "
         "changes, or click Regenerate for a fresh draft — otherwise it's ready to publish."
     )
     # Editing an already-published job stays in the "editing" phase throughout (that's what
@@ -1181,7 +1203,7 @@ def refine_jd(state: GraphState, config: RunnableConfig) -> dict:
         return {"messages": [AIMessage(content=response)], "last_response": response}
 
     updated_jd = _apply_job_state_identity_fields(
-        _dedupe_jd_lists(_strip_markdown(output.updated_jd.model_dump(mode="json"))), job_state
+        _dedupe_stand_out(_strip_markdown(output.updated_jd.model_dump(mode="json")), job_state), job_state
     )
     new_jd_versions = dict(jd_versions)
     new_jd_versions[version] = updated_jd

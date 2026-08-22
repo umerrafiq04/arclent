@@ -103,19 +103,16 @@ class ListOperation(BaseModel):
 # The generated job description's OWN list fields (distinct from JobState's — see ListOperation
 # above) — what the draft panel's "Full job description detail" editor uses to add/remove items
 # directly on the drafted document, the same way ListOperation lets the recruiter edit
-# required_skills/preferred_skills/responsibilities on job_state.
-JD_LIST_FIELDS = (
-    "major_accountabilities", "minimum_requirements", "required_qualifications",
-    "preferred_qualifications", "stand_out", "benefits",
-)
-
-
+# required_skills/preferred_skills/responsibilities on job_state. Only stand_out/benefits live on
+# the document itself now — required_skills/preferred_skills/responsibilities were removed from
+# JobDescriptionDraft entirely (see the comment there) so ListOperation above is what edits those,
+# even from inside the "Full job description detail" section.
+# REPLACE (send the whole updated list) is what powers in-place item editing in the draft panel —
+# rewriting one existing item's text sends the full array back with that one entry changed, which
+# preserves its position; ADD always appends and REMOVE only deletes, neither can edit in place.
 class JDListOperation(BaseModel):
-    field: Literal[
-        "major_accountabilities", "minimum_requirements", "required_qualifications",
-        "preferred_qualifications", "stand_out", "benefits",
-    ]
-    operation: Literal["ADD", "REMOVE"]
+    field: Literal["stand_out", "benefits"]
+    operation: Literal["ADD", "REMOVE", "REPLACE"]
     values: list[str]
 
 
@@ -142,6 +139,14 @@ class TurnAnalysis(BaseModel):
     response: str
 
 
+# required_skills/preferred_skills/responsibilities are deliberately NOT fields here — they live
+# ONLY on JobState (see below) and are rendered directly from there everywhere (the draft panel,
+# the public listing, the published DB row). Earlier this document also generated its own
+# major_accountabilities/minimum_requirements/required_qualifications/preferred_qualifications as
+# a second, independently-enriched copy of the same three concepts — a reported duplication bug
+# (the recruiter saw "Responsibilities" and "Major Accountabilities" as two separate, sometimes
+# inconsistent sections). Removed entirely rather than reconciled: there is now exactly one copy
+# of each, on JobState, single source of truth for editing, generation, and publishing alike.
 class JobDescriptionDraft(BaseModel):
     job_title: str | None = None
     requisition_id: str | None = None
@@ -153,11 +158,6 @@ class JobDescriptionDraft(BaseModel):
     company_overview: str | None = None
     job_summary: str | None = None
     about_role: str | None = None
-    major_accountabilities: list[str] = Field(default_factory=list)
-    minimum_requirements: list[str] = Field(default_factory=list)
-    required_qualifications: list[str] = Field(default_factory=list)
-    preferred_qualifications: list[str] = Field(default_factory=list)
-    required_skills: list[str] = Field(default_factory=list)
     stand_out: list[str] = Field(default_factory=list)
     benefits: list[str] = Field(default_factory=list)
     why_company: str | None = None

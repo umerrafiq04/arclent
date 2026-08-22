@@ -13,12 +13,18 @@ const JD_TEXT_FIELDS = [
   ["why_company", "Why Join"],
 ];
 
-const JD_LIST_FIELDS = [
-  ["major_accountabilities", "Major Accountabilities"],
-  ["minimum_requirements", "Minimum Requirements"],
-  ["required_qualifications", "Required Qualifications"],
-  ["preferred_qualifications", "Preferred Qualifications"],
+// Responsibilities/Required Skills/Preferred Skills come from the JOB record itself (the same
+// job_state-backed columns the recruiter edits in the draft panel), not from selected_jd — the
+// drafted document no longer carries its own separate copy of these three (see
+// JobDescriptionDraft's comment on the backend) — so there is exactly one copy shown here, always
+// matching what the recruiter's panel shows and what Regenerate treats as the source of truth.
+const JOB_LIST_FIELDS = [
+  ["responsibilities", "Responsibilities"],
   ["required_skills", "Required Skills"],
+  ["preferred_skills", "Preferred Skills"],
+];
+
+const JD_LIST_FIELDS = [
   ["stand_out", "Ways to Stand Out"],
   ["benefits", "Benefits / Employee Experience"],
 ];
@@ -139,7 +145,27 @@ async function renderList() {
   }
 }
 
-function jdSections(jd) {
+function jdListField(label, items) {
+  const field = document.createElement("div");
+  field.className = "jd-field";
+  const h4 = document.createElement("h4");
+  h4.textContent = label;
+  const ul = document.createElement("ul");
+  items.forEach((item) => {
+    const li = document.createElement("li");
+    li.textContent = item;
+    ul.appendChild(li);
+  });
+  field.appendChild(h4);
+  field.appendChild(ul);
+  return field;
+}
+
+// Takes the FULL job record (not just selected_jd) — Responsibilities/Required Skills/Preferred
+// Skills render from the job's own job_state-backed columns (JOB_LIST_FIELDS), the rest from the
+// drafted document (job.selected_jd).
+function jdSections(job) {
+  const jd = job.selected_jd || {};
   const frag = document.createDocumentFragment();
   JD_TEXT_FIELDS.forEach(([key, label]) => {
     if (!jd[key]) return;
@@ -153,22 +179,15 @@ function jdSections(jd) {
     field.appendChild(p);
     frag.appendChild(field);
   });
+  JOB_LIST_FIELDS.forEach(([key, label]) => {
+    const items = job[key];
+    if (!items || items.length === 0) return;
+    frag.appendChild(jdListField(label, items));
+  });
   JD_LIST_FIELDS.forEach(([key, label]) => {
     const items = jd[key];
     if (!items || items.length === 0) return;
-    const field = document.createElement("div");
-    field.className = "jd-field";
-    const h4 = document.createElement("h4");
-    h4.textContent = label;
-    const ul = document.createElement("ul");
-    items.forEach((item) => {
-      const li = document.createElement("li");
-      li.textContent = item;
-      ul.appendChild(li);
-    });
-    field.appendChild(h4);
-    field.appendChild(ul);
-    frag.appendChild(field);
+    frag.appendChild(jdListField(label, items));
   });
   return frag;
 }
@@ -215,8 +234,7 @@ async function showDetail(jobId) {
 
     card.appendChild(detailMetaGrid(job));
 
-    const jd = job.selected_jd || {};
-    card.appendChild(jdSections(jd));
+    card.appendChild(jdSections(job));
 
     const applyRow = document.createElement("div");
     applyRow.className = "apply-row";

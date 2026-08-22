@@ -298,7 +298,7 @@ def build_system_prompt(
 JD_GENERATION_PROMPT_TEMPLATE = """You are writing ONE complete, polished job description for a professional job
 posting — not a menu of options, the actual final draft. The recruiter can ask for it to be regenerated or refined
 afterward, so this doesn't need to be "safe" or hedged — write the single best version you can.
-
+{regeneration_context}
 COMPANY PROFILE (reusable background — use for company-context sections; never state a fact not present here):
 {company_profile_json}
 
@@ -306,7 +306,9 @@ JOB-SPECIFIC COMPANY OVERRIDES (for this job only — use these INSTEAD OF the m
 when present, but never modify or contradict the stored company profile itself):
 {company_overrides_json}
 
-JOB DETAILS (describe the position itself — use these as-is EXCEPT job_title, see below):
+JOB DETAILS (describe the position itself — use these as-is EXCEPT job_title, see below — required_skills,
+preferred_skills, and responsibilities are shown here for CONTEXT ONLY: they are NOT fields of the document you are
+producing, see "NOT PART OF THIS DOCUMENT" below):
 {job_state_json}
 
 JOB TITLE HEADLINE: job_state.job_title is the recruiter's simple, informal selection (e.g. "Video Editor",
@@ -320,6 +322,14 @@ Producer or Motion Graphics Designer one), and never invent a specialty, platfor
 the real job details — the enhancement should read as a natural, more specific version of the same role, not an
 unrelated one.
 
+NOT PART OF THIS DOCUMENT: required_skills, preferred_skills, and responsibilities are NOT fields you produce —
+they live only on the job details above, are shown to the recruiter directly from there, and are published as-is.
+Do not restate them, summarize them, or produce any equivalent of them (no "accountabilities," "minimum
+requirements," "required qualifications," or "preferred qualifications" sections) — that used to be a real, reported
+bug: the same skills/responsibilities showed up twice, once from job_state and once regenerated slightly differently
+by you, confusing the recruiter about which copy was current. There is exactly one copy now, and it isn't yours to
+write.
+
 Tone: professional and clear, comprehensive enough to fully inform a candidate, but written in engaging, modern
 language rather than stiff corporate boilerplate — this is the one draft the recruiter will see, so it should read
 as genuinely well-written, not a rough first pass.
@@ -332,53 +342,51 @@ awards, clients, revenue, company history, benefits, policies, executives, or st
 — that rule is strict and only about COMPANY facts. Concretely: company_overview, why_company, and any
 benefits-list content must come ONLY from an actual company-profile/override value; if company_overview,
 company_culture, benefits, work_life_balance, and why_join_us are ALL empty, produce a JD with no company-context
-sections at all (job_summary/about_role/accountabilities/requirements/qualifications built purely from job details
-still get written normally) rather than filling the gap with invented-sounding filler.
+sections at all (job_summary/about_role built purely from job details still get written normally) rather than
+filling the gap with invented-sounding filler.
 
-ROLE-STANDARD ENRICHMENT (do this — a bare list of the recruiter's literal skills makes a weak JD): use your general
-professional knowledge of what this job title typically requires to make the requirements/qualifications sections
-genuinely complete, not just a restatement of job_state. Concretely:
-- required_skills and minimum_requirements: the recruiter's explicitly stated mandatory skills/requirements, plus
-  generic baseline competencies OBVIOUSLY implied by the title itself may also read as requirements — e.g. "strong
-  analytical and problem-solving skills" for a Data Analyst, or "HTML, CSS, and JavaScript" for a role literally
-  titled Front-End Developer (the title itself already implies these, they aren't an inference beyond it).
-- NEVER invent, as either a requirement or a preference, anything the recruiter didn't state that isn't a generic
-  skill obviously implied by the title: no specific education/degree requirement, no certification (PMP, CSPO,
-  AWS-certified, or any other), no specific years-of-experience figure beyond what job_state.experience already
-  says, no salary/compensation figure, no specific named tool or framework that isn't obviously implied by the
-  title itself (e.g. don't add "must know React" just because the role is front-end — React is one of several
-  valid frameworks, not implied by the title the way HTML/CSS/JS is), and no company policy. These are facts that
-  materially change a candidate's eligibility and belong ONLY in the JOB DETAILS above, confirmed by the recruiter
-  — never your own inference, no matter how standard it seems for the role.
-- preferred_qualifications: role-standard skills/tools you're recommending that the recruiter did NOT explicitly
-  mention, phrased as recommendations, not confirmed facts — e.g. "Preferred qualifications may include experience
-  with Power BI or Tableau." The same "never invent a degree/certification/years/salary" rule applies here too — a
-  *recommended* certification is still a fabricated credential; leave it out rather than suggest one.
-- NEVER list the same skill/tool/technology in more than one section. A name that appears in job_state.required_skills
-  or that you added to required_skills/minimum_requirements belongs ONLY there — it must never also appear in
-  preferred_qualifications, stand_out, or anywhere else in the draft (e.g. if React is a required skill, do not
-  ALSO recommend it as a preferred qualification — that reads as self-contradictory, as if you don't know whether
-  it's required). The same applies to job_state.preferred_skills: a skill the recruiter explicitly marked preferred
-  belongs in preferred_qualifications only, never duplicated into required_skills/minimum_requirements. Before
-  finishing, mentally check every name across required_skills, minimum_requirements, preferred_qualifications, and
-  stand_out for overlap and remove any duplicate — each specific skill/tool appears in exactly ONE section.
-- This enrichment is about generic ROLE skills ONLY — it never extends to inventing COMPANY facts, and never
-  extends to inventing CANDIDATE-ELIGIBILITY facts (degrees, certifications, experience thresholds, compensation)
-  that only the recruiter can actually decide. A recruiter's explicit skill always takes precedence over anything
-  you'd otherwise suggest, and if they only gave one or two skills, still ground your additions in genuinely
-  universal, title-implied basics rather than guessing at their actual hiring bar.
+STAND-OUT ADDITIONS (the one place you may add role-standard skills beyond what the recruiter stated): stand_out is
+for genuinely optional, "nice to have but not expected" extras that would make a candidate stand out — phrased as
+suggestions, not requirements. NEVER invent, here or anywhere else, a specific education/degree requirement, a
+certification (PMP, CSPO, AWS-certified, or any other), a years-of-experience figure beyond what job_state.experience
+already says, a salary/compensation figure, or a company policy — these are candidate-eligibility facts that only
+the recruiter can decide, never your inference. NEVER repeat, in stand_out, anything already present in
+job_state.required_skills or job_state.preferred_skills above — check both lists before adding anything, and drop
+any overlap. If there's nothing genuinely additive to suggest, leave stand_out empty rather than padding it.
 
 Leave requisition_id null — it is assigned by the system when the job is published, not by you.
-Only include a section (accountabilities, requirements, qualifications, benefits, etc.) when there is real content
-for it — do not force placeholder content into a section that has nothing to say.
+Only include a section (about_role, benefits, stand_out, etc.) when there is real content for it — do not force
+placeholder content into a section that has nothing to say.
 
 Write every field as plain text — no markdown (no **bold**, no _italic_, no leading "- " bullet dashes inside
 list items). This content is rendered directly as-is, not through a markdown renderer.
 """
 
+# Injected into JD_GENERATION_PROMPT_TEMPLATE only when regenerating an EXISTING draft (see
+# generate_jd) — turns generation from "start from a blank page" into "refresh this specific
+# draft." Verified live this was a real, reported gap: clicking Regenerate after the recruiter had
+# hand-edited About the Role / Company Overview / Stand Out / Benefits directly in the panel threw
+# all of that away and wrote a fresh draft from job_state alone, since generation never even saw
+# the existing content. Necessary because job_state only carries the STRUCTURED facts
+# (title/location/salary/skills/etc.) — the narrative fields this template writes (job_summary,
+# about_role, company_overview, why_company, stand_out, benefits) live only in the drafted
+# document itself, so without this, a hand-edit to any of them is invisible to a regeneration.
+_JD_REGENERATION_CONTEXT = """
+CURRENT DRAFT (the recruiter has already reviewed this and may have hand-edited it directly — treat it as your
+starting point, not a blank page. PRESERVE its existing wording/content in every field wherever it's still accurate
+and consistent with the JOB DETAILS above; only rewrite or add what's genuinely missing, stale, or inconsistent with
+a job detail that has since changed (e.g. the location or salary was updated after this draft was written). Do not
+discard content the recruiter clearly wrote or edited themselves just to phrase it differently — this is a refresh,
+not a rewrite from scratch):
+{current_jd_json}
+"""
 
-def build_jd_generation_prompt(company_profile: dict, job_state: dict) -> str:
+
+def build_jd_generation_prompt(company_profile: dict, job_state: dict, current_jd: dict | None = None) -> str:
     return JD_GENERATION_PROMPT_TEMPLATE.format(
+        regeneration_context=_JD_REGENERATION_CONTEXT.format(current_jd_json=json.dumps(current_jd, indent=2))
+        if current_jd
+        else "",
         company_profile_json=json.dumps(company_profile or {}, indent=2),
         company_overrides_json=json.dumps(job_state.get("company_overrides") or {}, indent=2),
         job_state_json=json.dumps(

@@ -453,7 +453,12 @@
     return wrap;
   }
 
-  function listEditor(labelText, items, onAdd, onRemove) {
+  // Every item is a real, editable text input — not static text next to a delete button. Editing
+  // an item sends the WHOLE array back as a REPLACE (onEdit), which is what preserves its position
+  // in the list; ADD always appends and REMOVE only deletes, neither can edit in place. Clearing an
+  // item's text to blank and blurring away removes it, same as clicking ✕ — a natural "delete by
+  // clearing" affordance alongside the explicit button, not the only way to remove something.
+  function listEditor(labelText, items, onAdd, onRemove, onEdit) {
     const wrap = document.createElement("div");
     wrap.className = "jm-field jm-list-field";
     const label = document.createElement("span");
@@ -461,11 +466,24 @@
     label.textContent = labelText;
     wrap.appendChild(label);
 
-    (items || []).forEach((item) => {
+    const current = items || [];
+    current.forEach((item, index) => {
       const row = document.createElement("div");
       row.className = "jm-list-item";
-      const text = document.createElement("span");
-      text.textContent = item;
+      const text = document.createElement("input");
+      text.type = "text";
+      text.value = item;
+      text.addEventListener("blur", () => {
+        const newVal = text.value.trim();
+        if (newVal === item) return; // unchanged
+        if (!newVal) {
+          onRemove(item);
+          return;
+        }
+        const updated = current.slice();
+        updated[index] = newVal;
+        onEdit(updated);
+      });
       const removeBtn = document.createElement("button");
       removeBtn.type = "button";
       removeBtn.className = "jm-list-remove";
@@ -560,20 +578,12 @@
 
     const jd = (jdVersions && jdVersions["1"]) || {};
 
+    // Top-level fields are deliberately minimal — just the structured logistics facts. Every
+    // actual JOB-CONTENT field (the written description, responsibilities, skills, etc.) lives
+    // exactly once, inside "Full job description detail" below — see that section for why.
     draftForm.appendChild(
       fieldRow("Job Title", jobState.job_title, (v) => patchField({ field_updates: { job_title: v } }))
     );
-
-    if (hasJd) {
-      draftForm.appendChild(
-        fieldRow(
-          "Job Description",
-          jd.job_summary || "",
-          (v) => patchField({ jd_text_updates: { job_summary: v } }),
-          { textarea: true, rows: 4 }
-        )
-      );
-    }
 
     const grid1 = document.createElement("div");
     grid1.className = "jm-field-grid";
@@ -628,39 +638,18 @@
     );
     draftForm.appendChild(grid3);
 
-    draftForm.appendChild(
-      listEditor(
-        "Responsibilities",
-        jobState.responsibilities,
-        (v) => patchField({ list_operations: [{ field: "responsibilities", operation: "ADD", values: [v] }] }),
-        (v) => patchField({ list_operations: [{ field: "responsibilities", operation: "REMOVE", values: [v] }] })
-      )
-    );
-
-    draftForm.appendChild(
-      listEditor(
-        "Required Skills",
-        jobState.required_skills,
-        (v) => patchField({ list_operations: [{ field: "required_skills", operation: "ADD", values: [v] }] }),
-        (v) => patchField({ list_operations: [{ field: "required_skills", operation: "REMOVE", values: [v] }] })
-      )
-    );
-
-    draftForm.appendChild(
-      listEditor(
-        "Preferred Skills",
-        jobState.preferred_skills,
-        (v) => patchField({ list_operations: [{ field: "preferred_skills", operation: "ADD", values: [v] }] }),
-        (v) => patchField({ list_operations: [{ field: "preferred_skills", operation: "REMOVE", values: [v] }] })
-      )
-    );
-
     if (hasJd) {
-      // Fully editable now (was read-only) — this is exactly what gets published, so a recruiter
-      // making a quick fix shouldn't have to leave the panel and go refine it via chat. Text
-      // fields commit via jd_text_updates, list fields via jd_list_operations — both patch the
-      // drafted document directly, same "no chat message, no LLM call" principle as every other
-      // field edit in this panel.
+      // Every actual job-content field lives here, exactly once — the recruiter used to see
+      // "Responsibilities" and "Major Accountabilities" as two separate, sometimes inconsistent
+      // sections holding the same information (same for Required Skills/Minimum Requirements and
+      // Preferred Skills/Preferred Qualifications); those JD-only duplicates are gone, so
+      // Responsibilities/Required Skills/Preferred Skills below are job_state's own fields —
+      // the SAME data Regenerate reads as the source of truth, not a separate copy. All of it is
+      // fully editable — this is exactly what gets published, so a recruiter making a quick fix
+      // shouldn't have to leave the panel and go refine it via chat. Text fields commit via
+      // jd_text_updates, job_state lists via list_operations, the JD's own remaining lists
+      // (Stand Out/Benefits) via jd_list_operations — all patch directly, no chat message, no LLM
+      // call, same principle as every other field edit in this panel.
       const details = document.createElement("details");
       details.className = "jm-expandable";
       details.open = true;
@@ -669,6 +658,15 @@
       details.appendChild(summary);
       const body = document.createElement("div");
       body.className = "jm-expandable-body";
+
+      body.appendChild(
+        fieldRow(
+          "Job Description",
+          jd.job_summary || "",
+          (v) => patchField({ jd_text_updates: { job_summary: v } }),
+          { textarea: true, rows: 4 }
+        )
+      );
 
       [
         ["About the Role", "about_role"],
@@ -685,11 +683,35 @@
         );
       });
 
+      body.appendChild(
+        listEditor(
+          "Responsibilities",
+          jobState.responsibilities,
+          (v) => patchField({ list_operations: [{ field: "responsibilities", operation: "ADD", values: [v] }] }),
+          (v) => patchField({ list_operations: [{ field: "responsibilities", operation: "REMOVE", values: [v] }] }),
+          (arr) => patchField({ list_operations: [{ field: "responsibilities", operation: "REPLACE", values: arr }] })
+        )
+      );
+      body.appendChild(
+        listEditor(
+          "Required Skills",
+          jobState.required_skills,
+          (v) => patchField({ list_operations: [{ field: "required_skills", operation: "ADD", values: [v] }] }),
+          (v) => patchField({ list_operations: [{ field: "required_skills", operation: "REMOVE", values: [v] }] }),
+          (arr) => patchField({ list_operations: [{ field: "required_skills", operation: "REPLACE", values: arr }] })
+        )
+      );
+      body.appendChild(
+        listEditor(
+          "Preferred Skills",
+          jobState.preferred_skills,
+          (v) => patchField({ list_operations: [{ field: "preferred_skills", operation: "ADD", values: [v] }] }),
+          (v) => patchField({ list_operations: [{ field: "preferred_skills", operation: "REMOVE", values: [v] }] }),
+          (arr) => patchField({ list_operations: [{ field: "preferred_skills", operation: "REPLACE", values: arr }] })
+        )
+      );
+
       [
-        ["Major Accountabilities", "major_accountabilities"],
-        ["Minimum Requirements", "minimum_requirements"],
-        ["Required Qualifications", "required_qualifications"],
-        ["Preferred Qualifications", "preferred_qualifications"],
         ["Stand Out", "stand_out"],
         ["Benefits", "benefits"],
       ].forEach(([label, key]) => {
@@ -698,7 +720,8 @@
             label,
             jd[key],
             (v) => patchField({ jd_list_operations: [{ field: key, operation: "ADD", values: [v] }] }),
-            (v) => patchField({ jd_list_operations: [{ field: key, operation: "REMOVE", values: [v] }] })
+            (v) => patchField({ jd_list_operations: [{ field: key, operation: "REMOVE", values: [v] }] }),
+            (arr) => patchField({ jd_list_operations: [{ field: key, operation: "REPLACE", values: arr }] })
           )
         );
       });

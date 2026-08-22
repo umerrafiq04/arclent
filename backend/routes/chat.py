@@ -309,27 +309,34 @@ def patch_job_state(session_id: str, body: JobStatePatch, user: dict = Depends(g
     update = {"job_state": job_state, "jd_stale": jd_stale, "phase": phase}
 
     # Hand-editing the current draft's own text/list fields directly (e.g. the summary, about the
-    # role, major accountabilities) — same principle as job_state fields: no LLM refinement call
-    # needed for a literal edit. Only overwrites keys that already exist on the draft
-    # (defense-in-depth allowlist), and doesn't mark it stale — a direct fix to the drafted content
-    # itself isn't "out of date with job_state" the way an unrelated job_state field change is.
+    # role, stand-out list) — same principle as job_state fields: no LLM refinement call needed
+    # for a literal edit. Only overwrites keys that already exist on the draft (defense-in-depth
+    # allowlist), and doesn't mark it stale — a direct fix to the drafted content itself isn't
+    # "out of date with job_state" the way an unrelated job_state field change is.
     selected_version = state.get("selected_version")
     jd_versions = state.get("jd_versions") or {}
     if (body.jd_text_updates or body.jd_list_operations) and selected_version and jd_versions.get(selected_version):
         jd = dict(jd_versions[selected_version])
         changed = False
+        hand_edited = set(state.get("jd_hand_edited_fields") or [])
         for key, value in body.jd_text_updates.items():
             if key in jd:
                 jd[key] = value
                 changed = True
+                hand_edited.add(key)
         for op in body.jd_list_operations:
             if op.field in jd:
                 jd[op.field] = _apply_list_operation(jd.get(op.field) or [], op.operation, op.values)
                 changed = True
+                hand_edited.add(op.field)
         if changed:
             new_jd_versions = dict(jd_versions)
             new_jd_versions[selected_version] = jd
             update["jd_versions"] = new_jd_versions
+            # Marks these fields as permanently recruiter-owned from now on — see generate_jd,
+            # which force-restores anything in this list from the pre-regeneration draft after
+            # every Regenerate, regardless of what the model produces. Never auto-clears.
+            update["jd_hand_edited_fields"] = list(hand_edited)
             save_refined_jd(session_id, selected_version, jd)
 
     graph.update_state(config, update)
