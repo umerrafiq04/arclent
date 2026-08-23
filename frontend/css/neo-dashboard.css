@@ -987,6 +987,93 @@ body.neo .empty-state {
   pointer-events: none;
 }
 
+/* ---------- Screening Questions popup + the pre-publish reminder (same small-modal shell) ---------- */
+/* Nested above .job-modal-overlay (z-index 300) and the confetti layer (400) — reachable from
+   inside the draft panel without closing the main modal first. Same visual language as .job-modal
+   itself (neo-surface, 2px black border, rounded corners), just smaller. */
+
+.jm-mini-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 500;
+  background: rgba(20, 20, 15, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+
+.jm-mini-overlay[hidden] {
+  display: none;
+}
+
+.jm-mini-modal {
+  width: 100%;
+  max-width: 480px;
+  max-height: 80vh;
+  background: var(--neo-surface, #fff);
+  border: 2px solid var(--neo-black, #14140f);
+  border-radius: 16px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.jm-mini-modal-small {
+  max-width: 420px;
+  max-height: none;
+}
+
+.jm-mini-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 18px;
+  border-bottom: 2px solid var(--neo-black, #14140f);
+  flex-shrink: 0;
+  gap: 10px;
+}
+
+.jm-mini-modal-header h3 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 800;
+}
+
+.jm-mini-modal-body {
+  padding: 16px 18px;
+  overflow-y: auto;
+  min-height: 0;
+  scrollbar-width: none;
+}
+
+.jm-mini-modal-body::-webkit-scrollbar {
+  display: none;
+}
+
+.jm-mini-modal-body p {
+  margin: 0 0 12px;
+  color: var(--neo-muted, #6b6858);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.jm-mini-modal-hint {
+  margin: 0 0 12px;
+  color: var(--neo-muted, #6b6858);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.jm-mini-modal-footer {
+  padding: 12px 18px;
+  border-top: 2px solid var(--neo-black, #14140f);
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
 .jm-confetti-piece {
   position: absolute;
   width: 9px;

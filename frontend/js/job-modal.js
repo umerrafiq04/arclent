@@ -392,6 +392,154 @@
     }
   }
 
+  // Screening Questions — recruiter-typed, purely manual (see JobState.custom_questions on the
+  // backend: never AI-touched in any way). Lives in its own small popup rather than inline in the
+  // draft panel, opened via the "Questions" button in the actions row (before Regenerate) — kept
+  // as a single lazily-created overlay/modal pair, reused across opens rather than rebuilt each
+  // time, consistent with how the main job-modal-overlay itself is a single persistent element.
+  let questionsOverlay = null;
+  let questionsModalBody = null;
+
+  function ensureQuestionsOverlay() {
+    if (questionsOverlay) return questionsOverlay;
+    const overlay = document.createElement("div");
+    overlay.className = "jm-mini-overlay";
+    overlay.hidden = true;
+    overlay.addEventListener("click", (e) => {
+      if (e.target === overlay) closeQuestionsModal();
+    });
+
+    const modal = document.createElement("div");
+    modal.className = "jm-mini-modal";
+    modal.addEventListener("click", (e) => e.stopPropagation());
+
+    const header = document.createElement("div");
+    header.className = "jm-mini-modal-header";
+    const title = document.createElement("h3");
+    title.textContent = "Screening Questions";
+    header.appendChild(title);
+    const closeX = document.createElement("button");
+    closeX.type = "button";
+    closeX.className = "icon-btn";
+    closeX.setAttribute("aria-label", "Close");
+    closeX.textContent = "✕";
+    closeX.addEventListener("click", () => closeQuestionsModal());
+    header.appendChild(closeX);
+    modal.appendChild(header);
+
+    const body = document.createElement("div");
+    body.className = "jm-mini-modal-body";
+    modal.appendChild(body);
+    questionsModalBody = body;
+
+    const footer = document.createElement("div");
+    footer.className = "jm-mini-modal-footer";
+    const doneBtn = document.createElement("button");
+    doneBtn.type = "button";
+    doneBtn.className = "neo-btn neo-btn-solid";
+    doneBtn.textContent = "Done";
+    doneBtn.addEventListener("click", () => closeQuestionsModal());
+    footer.appendChild(doneBtn);
+    modal.appendChild(footer);
+
+    overlay.appendChild(modal);
+    document.body.appendChild(overlay);
+    questionsOverlay = overlay;
+    return overlay;
+  }
+
+  // Called after every render of the main draft panel too (see renderDraftForm), so an edit made
+  // while this popup is open (add/remove/in-place edit, all via the same patchField -> full
+  // renderDraftForm round trip as everything else in this panel) is reflected immediately instead
+  // of showing a stale list until the recruiter happens to close and reopen it.
+  function renderQuestionsModalBody(jobState) {
+    if (!questionsModalBody) return;
+    clearChildren(questionsModalBody);
+    const questions = (jobState && jobState.custom_questions) || [];
+    if (questions.length === 0) {
+      const hint = document.createElement("p");
+      hint.className = "jm-mini-modal-hint";
+      hint.textContent = "No questions yet — add one below to screen candidates when they apply.";
+      questionsModalBody.appendChild(hint);
+    }
+    questionsModalBody.appendChild(
+      listEditor(
+        "",
+        questions,
+        (v) => patchField({ list_operations: [{ field: "custom_questions", operation: "ADD", values: [v] }] }),
+        (v) => patchField({ list_operations: [{ field: "custom_questions", operation: "REMOVE", values: [v] }] }),
+        (arr) => patchField({ list_operations: [{ field: "custom_questions", operation: "REPLACE", values: arr }] }),
+        "Type a question and click Add…"
+      )
+    );
+  }
+
+  function openQuestionsModal() {
+    const jobState = (currentData && currentData.job_state) || {};
+    ensureQuestionsOverlay();
+    renderQuestionsModalBody(jobState);
+    questionsOverlay.hidden = false;
+  }
+
+  function closeQuestionsModal() {
+    if (questionsOverlay) questionsOverlay.hidden = true;
+  }
+
+  // Non-blocking reminder — shown only when Publish is clicked with zero questions added yet.
+  // Never prevents publishing outright (Publish itself stays available no matter what, same
+  // principle as jd_stale never gating it) — just a real, dismissible nudge with a direct path
+  // into the add-questions popup, rather than silently letting a screening opportunity go unused.
+  function openQuestionsReminder(onPublishAnyway) {
+    const overlay = document.createElement("div");
+    overlay.className = "jm-mini-overlay";
+    overlay.addEventListener("click", (e) => {
+      if (e.target === overlay) document.body.removeChild(overlay);
+    });
+
+    const modal = document.createElement("div");
+    modal.className = "jm-mini-modal jm-mini-modal-small";
+    modal.addEventListener("click", (e) => e.stopPropagation());
+
+    const header = document.createElement("div");
+    header.className = "jm-mini-modal-header";
+    const title = document.createElement("h3");
+    title.textContent = "No screening questions yet";
+    header.appendChild(title);
+    modal.appendChild(header);
+
+    const body = document.createElement("div");
+    body.className = "jm-mini-modal-body";
+    const p = document.createElement("p");
+    p.textContent = "You haven't added any questions for candidates to answer. Add a few now, or publish without them.";
+    body.appendChild(p);
+    modal.appendChild(body);
+
+    const footer = document.createElement("div");
+    footer.className = "jm-mini-modal-footer";
+    const publishAnywayBtn = document.createElement("button");
+    publishAnywayBtn.type = "button";
+    publishAnywayBtn.className = "neo-btn";
+    publishAnywayBtn.textContent = "Publish Anyway";
+    publishAnywayBtn.addEventListener("click", () => {
+      document.body.removeChild(overlay);
+      onPublishAnyway();
+    });
+    const addBtn = document.createElement("button");
+    addBtn.type = "button";
+    addBtn.className = "neo-btn neo-btn-solid";
+    addBtn.textContent = "Add Questions";
+    addBtn.addEventListener("click", () => {
+      document.body.removeChild(overlay);
+      openQuestionsModal();
+    });
+    footer.appendChild(publishAnywayBtn);
+    footer.appendChild(addBtn);
+    modal.appendChild(footer);
+
+    overlay.appendChild(modal);
+    document.body.appendChild(overlay);
+  }
+
   function fieldRow(labelText, value, onCommit, opts) {
     opts = opts || {};
     const wrap = document.createElement("label");
@@ -458,13 +606,15 @@
   // in the list; ADD always appends and REMOVE only deletes, neither can edit in place. Clearing an
   // item's text to blank and blurring away removes it, same as clicking ✕ — a natural "delete by
   // clearing" affordance alongside the explicit button, not the only way to remove something.
-  function listEditor(labelText, items, onAdd, onRemove, onEdit) {
+  function listEditor(labelText, items, onAdd, onRemove, onEdit, addPlaceholder) {
     const wrap = document.createElement("div");
     wrap.className = "jm-field jm-list-field";
-    const label = document.createElement("span");
-    label.className = "jm-field-label";
-    label.textContent = labelText;
-    wrap.appendChild(label);
+    if (labelText) {
+      const label = document.createElement("span");
+      label.className = "jm-field-label";
+      label.textContent = labelText;
+      wrap.appendChild(label);
+    }
 
     const current = items || [];
     current.forEach((item, index) => {
@@ -498,7 +648,7 @@
     addRow.className = "jm-list-add";
     const addInput = document.createElement("input");
     addInput.type = "text";
-    addInput.placeholder = `Add ${labelText.toLowerCase()}…`;
+    addInput.placeholder = addPlaceholder || `Add ${labelText.toLowerCase()}…`;
     const addBtn = document.createElement("button");
     addBtn.type = "button";
     addBtn.className = "neo-btn neo-btn-small neo-btn-yellow";
@@ -734,27 +884,23 @@
         );
       });
 
-      // Custom Questions — recruiter-typed screening questions, purely manual: unlike every other
-      // list above, this one is never touched by the AI in any way (not generated, not proofread,
-      // not enhanced by Regenerate) — see JobState.custom_questions on the backend. It's a
-      // job_state field like Responsibilities/Required Skills/Preferred Skills above (so it uses
-      // list_operations, not jd_list_operations), just deliberately excluded from every LLM call.
-      body.appendChild(
-        listEditor(
-          "Questions",
-          jobState.custom_questions,
-          (v) => patchField({ list_operations: [{ field: "custom_questions", operation: "ADD", values: [v] }] }),
-          (v) => patchField({ list_operations: [{ field: "custom_questions", operation: "REMOVE", values: [v] }] }),
-          (arr) => patchField({ list_operations: [{ field: "custom_questions", operation: "REPLACE", values: arr }] })
-        )
-      );
-
       details.appendChild(body);
       draftForm.appendChild(details);
     }
 
     const actions = document.createElement("div");
     actions.className = "jm-draft-actions";
+
+    // Opens the Screening Questions popup (see ensureQuestionsOverlay above) — deliberately
+    // first in this row, before Generate/Regenerate, per the requested layout. Never disabled:
+    // questions can be added/edited at any point in the draft's lifecycle, JD generated or not.
+    const questionsBtn = document.createElement("button");
+    questionsBtn.type = "button";
+    questionsBtn.className = "neo-btn";
+    const questionCount = (jobState.custom_questions || []).length;
+    questionsBtn.textContent = questionCount > 0 ? `✎ Questions (${questionCount})` : "+ Add Questions";
+    questionsBtn.addEventListener("click", () => openQuestionsModal());
+    actions.appendChild(questionsBtn);
 
     const generateBtn = document.createElement("button");
     generateBtn.type = "button";
@@ -786,7 +932,13 @@
     // since, regardless of whether they've clicked Regenerate again. Regenerate stays available as
     // an option, never a requirement.
     publishBtn.disabled = !hasJd || !data.selected_version || alreadyPublished;
-    publishBtn.addEventListener("click", () => publishNow(publishBtn));
+    publishBtn.addEventListener("click", () => {
+      if ((jobState.custom_questions || []).length === 0) {
+        openQuestionsReminder(() => publishNow(publishBtn));
+      } else {
+        publishNow(publishBtn);
+      }
+    });
     actions.appendChild(publishBtn);
 
     draftForm.appendChild(actions);
@@ -798,6 +950,14 @@
       strong.textContent = `✓ Published as ${data.job_record.job_id}`;
       posted.appendChild(strong);
       draftForm.appendChild(posted);
+    }
+
+    // Keep the Screening Questions popup's content in sync with whatever just triggered this
+    // re-render (an edit made inside the popup itself, but also Generate/Regenerate/Publish,
+    // which all call renderDraftForm too) — otherwise it would show a stale list until closed
+    // and reopened.
+    if (questionsOverlay && !questionsOverlay.hidden) {
+      renderQuestionsModalBody(jobState);
     }
   }
 
@@ -1017,6 +1177,7 @@
   }
 
   function closeModal() {
+    closeQuestionsModal();
     overlay.classList.remove("open");
     document.body.style.overflow = "";
     closeTimer = setTimeout(() => {
@@ -1043,6 +1204,7 @@
     currentPhase = null;
     pendingFile = null;
     currentData = null;
+    closeQuestionsModal();
     renderAttachmentChip();
     clearError();
     renderMessages([], [], false);
@@ -1054,6 +1216,7 @@
 
   async function openExisting(existingSessionId) {
     sessionId = existingSessionId;
+    closeQuestionsModal();
     try {
       const data = await api.getChat(sessionId);
       currentData = data;
