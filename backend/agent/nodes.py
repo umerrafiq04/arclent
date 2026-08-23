@@ -1,4 +1,5 @@
 import logging
+import random
 import re
 import time
 
@@ -480,6 +481,48 @@ def analyze_turn(state: GraphState) -> dict:
                     }
                 )
 
+    # See _detect_field_value_query above — deterministic override for "what's the current X?"
+    # style questions, answered straight from job_state (the single source of truth) rather than
+    # trusting the model's own composed response, which verified live can echo an earlier, now-
+    # stale value from the conversation transcript instead. Only fires when this turn's own
+    # field_updates didn't just set a new value for that field — a genuine "make it $80k" statement
+    # is left untouched, that's correctly handled by the model's own extraction already.
+    field_query = _detect_field_value_query(last_human_text)
+    if field_query and not (analysis.field_updates or {}).get(field_query):
+        current_value = (state.get("job_state") or {}).get(field_query)
+        label = _FIELD_DISPLAY_LABELS.get(field_query, field_query)
+        response_text = (
+            f"The current {label} is {current_value}."
+            if current_value
+            else f"No {label} has been set yet — want to add one now?"
+        )
+        analysis = analysis.model_copy(update={"response": response_text})
+
+    # Location-aware currency hint for the model's OWN first-time salary question — _salary_question
+    # (used by the deterministic redirect paths below) only covers those specific override routes,
+    # not the far more common case where the model asks its own salary question in its own words on
+    # the normal path. Detected structurally: does the QUESTION portion of this turn's response
+    # (never an acknowledgment clause mentioning salary in passing — same sentence-isolation as the
+    # _KEYWORD_FIELD_HINTS sniffing above) actually pose a salary question, via the same keyword
+    # matcher _detect_field_value_query uses above. Only appends when a currency is known for the
+    # recruiter's own location AND the model didn't already include that symbol itself.
+    response_question_sentences = [s for s in re.split(r"(?<=[.!?])\s+", analysis.response or "") if "?" in s]
+    response_question_text = " ".join(response_question_sentences) or (analysis.response or "")
+    if _FIELD_QUERY_KEYWORDS["salary"].search(response_question_text):
+        # Use THIS turn's own field_updates for location too, not just state's pre-turn snapshot —
+        # verified live the model routinely combines "thanks for Bangalore" + "what's the salary?"
+        # into ONE turn (acknowledge + ask the next single question, same as every other checklist
+        # transition), so by the time this runs, location was often JUST set this same turn and
+        # hasn't reached state["job_state"] yet (that merge happens later, in apply_updates).
+        prospective_location = (analysis.field_updates or {}).get("location") or (state.get("job_state") or {}).get(
+            "location"
+        )
+        currency_symbol = _currency_symbol_for_location(prospective_location)
+        if currency_symbol and currency_symbol not in (analysis.response or ""):
+            analysis = analysis.model_copy(
+                update={"response": f"{(analysis.response or '').rstrip()} (in {currency_symbol}, based on the location you gave)"}
+            )
+
     # Never trust enough_information=true at face value: cross-check it against the same
     # deterministic checklist ready_to_generate() relies on. Verified live that the model reaches
     # this point far more often than prompt compliance alone would suggest — it reliably asks
@@ -676,6 +719,53 @@ def _extract_fact_backstop(text: str) -> dict:
     return found
 
 
+# The recruiter asking what a field is CURRENTLY set to ("what's the salary again?", "what
+# location did I put?") — verified live that prompt instructions alone aren't reliable here: even
+# with the system prompt's job_state_json showing the correct, up-to-date value, the model kept
+# answering with an earlier, now-superseded value from the conversation transcript instead (a
+# stronger "this block is the single source of truth" instruction in the prompt did not fix it in
+# testing). Deterministic override, not a prompt hope — same reasoning as _extract_fact_backstop
+# above. Narrow and keyword-based (real free text has too much variety to parse reliably); false
+# positives are cheap here (worst case: re-stating accurate current info the recruiter wasn't quite
+# asking for), so this errs toward catching more phrasings rather than being maximally precise.
+_FIELD_QUERY_KEYWORDS = {
+    "salary": re.compile(r"\bsalary\b", re.IGNORECASE),
+    "location": re.compile(r"\blocation\b", re.IGNORECASE),
+    "job_title": re.compile(r"\b(?:job\s+)?title\b", re.IGNORECASE),
+    "work_mode": re.compile(r"\bwork\s*mode\b", re.IGNORECASE),
+    "employment_type": re.compile(r"\bemployment\s*type\b", re.IGNORECASE),
+    "experience": re.compile(r"\bexperience\b", re.IGNORECASE),
+    "deadline": re.compile(r"\bdeadline\b", re.IGNORECASE),
+}
+_FIELD_QUERY_SIGNAL_RE = re.compile(
+    r"\bwhat(?:'s|s)?\b|\bremind me\b|\btell me\b|\bcurrent(?:ly)?\b|\bagain\b", re.IGNORECASE
+)
+_FIELD_DISPLAY_LABELS = {
+    "salary": "salary",
+    "location": "location",
+    "job_title": "job title",
+    "work_mode": "work mode",
+    "employment_type": "employment type",
+    "experience": "experience level",
+    "deadline": "application deadline",
+}
+
+
+def _detect_field_value_query(text: str) -> str | None:
+    """Returns the job_state field name the recruiter appears to be asking the CURRENT value of,
+    or None. Requires both a question-ish signal word (what/remind me/tell me/current/again) AND a
+    recognized field keyword somewhere in the same message — a bare mention of "salary" while
+    actually STATING a new figure ("the salary should be $80k") has no signal word and is correctly
+    left alone (that case is already handled by the model's own field_updates extraction).
+    """
+    if not text or not _FIELD_QUERY_SIGNAL_RE.search(text):
+        return None
+    for field, pattern in _FIELD_QUERY_KEYWORDS.items():
+        if pattern.search(text):
+            return field
+    return None
+
+
 # "Fresher" (and equivalents) means little-to-no prior professional experience — a message that
 # also states a real years-of-experience figure alongside it is self-contradictory (e.g. "hire a
 # fresher with 5 years of experience"). 0-1 years is still consistent with "fresher"; 2+ is not.
@@ -748,9 +838,75 @@ _CHECKLIST_QUESTIONS = {
 _CHECKLIST_CHIPS = {
     "required_skills": [],
     "responsibilities": [],
-    "location": ["Worldwide", "New York", "London", "Bangalore"],
     "salary": ["Competitive, negotiable"],
 }
+
+# location is deliberately NOT a static entry above — reported live as feeling stale (the same
+# fixed "Worldwide/New York/London/Bangalore" four every single time). "Worldwide" always leads
+# (still the single most common answer for a remote-friendly role), the other three are a fresh
+# random sample from this wider, geographically varied pool on every ask — see
+# _location_checklist_chips below, the only thing that reads this pool.
+_LOCATION_CHIP_POOL = [
+    "Bangalore", "Mumbai", "Delhi NCR", "Hyderabad", "Pune", "Chennai", "Kolkata", "Srinagar",
+    "New York", "Los Angeles", "London", "Toronto", "Sydney", "Singapore", "Dubai", "Berlin",
+]
+
+
+def _location_checklist_chips() -> list[str]:
+    return ["Worldwide", *random.sample(_LOCATION_CHIP_POOL, min(3, len(_LOCATION_CHIP_POOL)))]
+
+
+def _checklist_chips_for(field: str) -> list[str]:
+    """Single access point for a checklist field's chip suggestions — routes "location" through
+    the randomized picker above instead of _CHECKLIST_CHIPS, everything else through the static
+    dict as before (falling back to no chips for an unrecognized field, same as a plain dict.get).
+    """
+    if field == "location":
+        return _location_checklist_chips()
+    return _CHECKLIST_CHIPS.get(field, [])
+
+
+# Keyword -> currency symbol, checked against the recruiter's own free-text location (asked right
+# before salary in _CHECKLIST_ORDER, so it's always already known by the time this is used) — e.g.
+# a Bangalore posting should be quoted in ₹, not $. Order matters where terms could otherwise
+# collide (none currently do); deliberately keyword-based rather than a fixed city list so any
+# India-adjacent phrasing (state names, "India" itself) still resolves correctly, not just the
+# exact city examples below.
+_CURRENCY_BY_LOCATION_KEYWORDS = [
+    (re.compile(r"\b(bangalore|bengaluru|mumbai|delhi|hyderabad|pune|chennai|kolkata|srinagar|"
+                r"ahmedabad|jaipur|noida|gurgaon|gurugram|india)\b", re.IGNORECASE), "₹"),
+    (re.compile(r"\b(london|manchester|birmingham|edinburgh|glasgow|u\.?k\.?|united kingdom)\b", re.IGNORECASE), "£"),
+    (re.compile(r"\b(toronto|vancouver|montreal|canada)\b", re.IGNORECASE), "C$"),
+    (re.compile(r"\b(sydney|melbourne|brisbane|australia)\b", re.IGNORECASE), "A$"),
+    (re.compile(r"\b(singapore)\b", re.IGNORECASE), "S$"),
+    (re.compile(r"\b(dubai|abu dhabi|u\.?a\.?e\.?)\b", re.IGNORECASE), "AED"),
+    (re.compile(r"\b(berlin|munich|frankfurt|paris|madrid|amsterdam|germany|france|spain|netherlands)\b", re.IGNORECASE), "€"),
+    (re.compile(r"\b(new york|los angeles|san francisco|chicago|austin|seattle|boston|"
+                r"u\.?s\.?a?\.?|united states)\b", re.IGNORECASE), "$"),
+]
+
+
+def _currency_symbol_for_location(location: str | None) -> str | None:
+    if not location:
+        return None
+    for pattern, symbol in _CURRENCY_BY_LOCATION_KEYWORDS:
+        if pattern.search(location):
+            return symbol
+    return None
+
+
+def _salary_question(job_state: dict) -> str:
+    """Adapts the salary question's currency hint to whatever location the recruiter already gave
+    (location is always asked first, see _CHECKLIST_ORDER) — reported live: a Bangalore posting
+    should be asked about in ₹, not left currency-agnostic. Deliberately never suggests a specific
+    NUMBER, only the currency itself — a concrete figure would be an invented anchor, exactly what
+    this app's anti-fabrication rules elsewhere forbid; the safe "Competitive, negotiable" chip
+    (_CHECKLIST_CHIPS above) is untouched so a recruiter who doesn't want to specify a currency-
+    bound figure still has that option.
+    """
+    base = _CHECKLIST_QUESTIONS["salary"]
+    symbol = _currency_symbol_for_location(job_state.get("location"))
+    return f"{base} (in {symbol}, based on the location you gave)" if symbol else base
 
 # Deterministically defaulted the moment a job_title exists, never asked about at all — per the
 # same founder decision as the shrunk checklist above. The recruiter can still change any of these
@@ -801,7 +957,8 @@ def _next_checklist_prompt(job_state: dict, skipped: set[str] | None = None) -> 
         if field in skipped:
             continue
         if not job_state.get(field):
-            return _CHECKLIST_QUESTIONS[field], field, _CHECKLIST_CHIPS[field]
+            question = _salary_question(job_state) if field == "salary" else _CHECKLIST_QUESTIONS[field]
+            return question, field, _checklist_chips_for(field)
     return None
 
 
@@ -1129,6 +1286,16 @@ def apply_updates(state: GraphState, config: RunnableConfig) -> dict:
         # default the way the prose-sniffing fallback below has to for open-ended fields.
         suggested_options = _DEFAULT_OPTIONS_BY_FIELD[asking_about_field]
         options_multi_select = False
+    elif raw_asking_about_field == "location":
+        # Same "always override, never trust the model's own suggested_options" tier as
+        # _DEFAULT_OPTIONS_BY_FIELD above — keyed on raw_asking_about_field since location is
+        # mandatory (asking_about_field itself was already nulled by the Skip-eligibility check).
+        # Verified live: when the model DID supply its own location chips, they bypassed the
+        # randomized pool entirely — sometimes missing "Worldwide" altogether, sometimes even
+        # conflating a work_mode value ("Remote") into what's supposed to be a place name — so
+        # this can't be left to model discretion the way open-ended fields below still have to be.
+        suggested_options = _checklist_chips_for("location")
+        options_multi_select = False
     elif not suggested_options:
         # The prompt asks the model for options on EVERY question, but compliance isn't
         # perfect — sometimes it spells options out in prose instead ("...4-6 years, or 7+
@@ -1143,7 +1310,7 @@ def apply_updates(state: GraphState, config: RunnableConfig) -> dict:
         if raw_asking_about_field in OPTIONAL_SKIPPABLE_FIELDS:
             suggested_options = _DEFAULT_OPTIONS_BY_FIELD.get(raw_asking_about_field, _GENERIC_FALLBACK_OPTIONS)
         else:
-            suggested_options = _CHECKLIST_CHIPS.get(raw_asking_about_field, [])
+            suggested_options = _checklist_chips_for(raw_asking_about_field)
         options_multi_select = False
 
     # A dedicated "Skip this" button already renders in the UI whenever asking_about_field is set

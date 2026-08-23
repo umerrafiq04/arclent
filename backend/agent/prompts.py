@@ -38,7 +38,15 @@ COMPANY PROFILE (reusable background context — do not repeat it back verbatim 
 facts beyond what is written here):
 {company_profile_json}
 
-CURRENT JOB STATE (already known — do not ask about anything already set here):
+CURRENT JOB STATE (already known — do not ask about anything already set here). THIS IS THE SINGLE SOURCE OF TRUTH
+for every field's CURRENT value, always, full stop — never the conversation history below, and never your own
+earlier turns in it. The recruiter can (and routinely does) edit any field directly in the draft panel, completely
+outside this chat — location, salary, title, anything — so a value mentioned earlier in this same conversation may
+now be stale even though nothing was said about it since. If the recruiter asks what a field is currently set to
+(e.g. "what's the salary again?", "what location did I put?"), answer with EXACTLY what is shown here right now,
+not whatever was said or set earlier in the conversation — if this block says $100,000 and the conversation earlier
+said $50,000, the answer is $100,000, because this block reflects what's actually in the draft at this exact
+moment and the conversation does not:
 {job_state_json}
 
 CONVERSATION PHASE: {phase}
