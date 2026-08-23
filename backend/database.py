@@ -36,6 +36,7 @@ CREATE TABLE IF NOT EXISTS jobs (
     preferred_skills         TEXT,
     education                TEXT,
     responsibilities         TEXT,
+    custom_questions         TEXT,
     salary                   TEXT,
     additional_information   TEXT,
     company_overrides        TEXT,
@@ -62,7 +63,7 @@ CREATE TABLE IF NOT EXISTS company_sequences (
 );
 """
 
-JSON_LIST_FIELDS = ("required_skills", "preferred_skills", "responsibilities")
+JSON_LIST_FIELDS = ("required_skills", "preferred_skills", "responsibilities", "custom_questions")
 JSON_DICT_FIELDS = ("company_overrides",)
 JSON_OPTIONAL_FIELDS = ("jd_version_1", "jd_version_2", "selected_jd")
 
@@ -181,6 +182,14 @@ def _migration_007_deadline(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE jobs ADD COLUMN deadline TEXT")
 
 
+def _migration_008_custom_questions(conn: sqlite3.Connection) -> None:
+    # Recruiter-authored screening questions, manually added in the draft panel — never AI-touched
+    # (see JobState.custom_questions in models.py). Defaults every existing row to an empty list,
+    # same as required_skills/preferred_skills/responsibilities.
+    if not _column_exists(conn, "jobs", "custom_questions"):
+        conn.execute("ALTER TABLE jobs ADD COLUMN custom_questions TEXT")
+
+
 MIGRATIONS = {
     1: _migration_001_users,
     2: _migration_002_auth_sessions,
@@ -189,6 +198,7 @@ MIGRATIONS = {
     5: _migration_005_backfill_chat_sessions,
     6: _migration_006_accepting_applications,
     7: _migration_007_deadline,
+    8: _migration_008_custom_questions,
 }
 
 
@@ -293,6 +303,7 @@ def upsert_job_draft(
         "preferred_skills": json.dumps(job_state.get("preferred_skills", [])),
         "education": job_state.get("education"),
         "responsibilities": json.dumps(job_state.get("responsibilities", [])),
+        "custom_questions": json.dumps(job_state.get("custom_questions", [])),
         "salary": job_state.get("salary"),
         "deadline": job_state.get("deadline"),
         "additional_information": job_state.get("additional_information"),
@@ -448,6 +459,7 @@ def finalize_edit(session_id: str, job_state: dict, selected_jd: dict, selected_
         "preferred_skills": json.dumps(job_state.get("preferred_skills", [])),
         "education": job_state.get("education"),
         "responsibilities": json.dumps(job_state.get("responsibilities", [])),
+        "custom_questions": json.dumps(job_state.get("custom_questions", [])),
         "salary": job_state.get("salary"),
         "deadline": job_state.get("deadline"),
         "additional_information": job_state.get("additional_information"),

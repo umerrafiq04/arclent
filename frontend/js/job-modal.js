@@ -734,6 +734,21 @@
         );
       });
 
+      // Custom Questions — recruiter-typed screening questions, purely manual: unlike every other
+      // list above, this one is never touched by the AI in any way (not generated, not proofread,
+      // not enhanced by Regenerate) — see JobState.custom_questions on the backend. It's a
+      // job_state field like Responsibilities/Required Skills/Preferred Skills above (so it uses
+      // list_operations, not jd_list_operations), just deliberately excluded from every LLM call.
+      body.appendChild(
+        listEditor(
+          "Custom Questions",
+          jobState.custom_questions,
+          (v) => patchField({ list_operations: [{ field: "custom_questions", operation: "ADD", values: [v] }] }),
+          (v) => patchField({ list_operations: [{ field: "custom_questions", operation: "REMOVE", values: [v] }] }),
+          (arr) => patchField({ list_operations: [{ field: "custom_questions", operation: "REPLACE", values: arr }] })
+        )
+      );
+
       details.appendChild(body);
       draftForm.appendChild(details);
     }

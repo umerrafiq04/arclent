@@ -29,6 +29,11 @@ const JD_LIST_FIELDS = [
   ["benefits", "Benefits / Employee Experience"],
 ];
 
+// Recruiter-typed screening questions — job_state-backed like JOB_LIST_FIELDS above, but rendered
+// last (after Benefits) rather than grouped with those, matching the draft panel's own section
+// order. Never AI-touched (see JobState.custom_questions on the backend).
+const CUSTOM_QUESTIONS_FIELD = ["custom_questions", "Custom Questions"];
+
 // Stacked label/value fields shown right under the title, before the full description body —
 // only the ones the job actually has get rendered.
 const DETAIL_META_FIELDS = [
@@ -189,6 +194,11 @@ function jdSections(job) {
     if (!items || items.length === 0) return;
     frag.appendChild(jdListField(label, items));
   });
+  const [cqKey, cqLabel] = CUSTOM_QUESTIONS_FIELD;
+  const customQuestions = job[cqKey];
+  if (customQuestions && customQuestions.length > 0) {
+    frag.appendChild(jdListField(cqLabel, customQuestions));
+  }
   return frag;
 }
 

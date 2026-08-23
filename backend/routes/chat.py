@@ -298,7 +298,13 @@ def patch_job_state(session_id: str, body: JobStatePatch, user: dict = Depends(g
         [op.model_dump() for op in body.list_operations],
         body.company_overrides,
     )
-    content_changed = job_state != original_job_state
+    # custom_questions never appears anywhere in the generated JD (see JobState's comment) — a
+    # change to it alone shouldn't flag the JD as stale, same reasoning as jd_text_updates/
+    # jd_list_operations below not marking stale for a direct fix to the drafted content itself.
+    content_changed = (
+        {k: v for k, v in job_state.items() if k != "custom_questions"}
+        != {k: v for k, v in original_job_state.items() if k != "custom_questions"}
+    )
     jd_versions_exist = bool(state.get("jd_versions"))
     jd_stale = (jd_versions_exist and content_changed) or state.get("jd_stale", False)
 

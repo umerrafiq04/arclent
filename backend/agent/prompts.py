@@ -1,5 +1,15 @@
 import json
 
+
+# custom_questions is recruiter-manual-only (see JobState's comment in models.py) — excluded from
+# every LLM-facing job_state view so the model never sees it as something to consider, mirror,
+# proofread, or otherwise touch, on top of the deterministic guard in apply_updates. Each prompt
+# below has its own further exclusions (e.g. company_overrides, shown separately instead); this
+# only removes custom_questions specifically, without changing what else each one already excludes.
+def _without_custom_questions(job_state: dict) -> dict:
+    return {k: v for k, v in (job_state or {}).items() if k != "custom_questions"}
+
+
 FINISH_PHRASES_HINT = (
     "that's all, these are the only details, nothing else, that's it, just proceed, "
     "I don't have any more details, that's everything I have, no additional information"
@@ -294,7 +304,7 @@ def build_system_prompt(
     return SYSTEM_PROMPT_TEMPLATE.format(
         recruiter_name=recruiter_name or "unknown",
         company_profile_json=json.dumps(company_profile or {}, indent=2),
-        job_state_json=json.dumps(job_state or {}, indent=2),
+        job_state_json=json.dumps(_without_custom_questions(job_state), indent=2),
         phase=phase,
         missing_essential=", ".join(missing_essential) if missing_essential else "(none)",
         jd_status=_jd_status_text(jd_exists, jd_stale),
@@ -452,7 +462,8 @@ def build_jd_generation_prompt(company_profile: dict, job_state: dict, current_j
         company_profile_json=json.dumps(company_profile or {}, indent=2),
         company_overrides_json=json.dumps(job_state.get("company_overrides") or {}, indent=2),
         job_state_json=json.dumps(
-            {k: v for k, v in (job_state or {}).items() if k != "company_overrides"}, indent=2
+            {k: v for k, v in _without_custom_questions(job_state).items() if k != "company_overrides"},
+            indent=2,
         ),
     )
 
@@ -486,7 +497,8 @@ def build_jd_refinement_prompt(company_profile: dict, job_state: dict, version: 
         company_profile_json=json.dumps(company_profile or {}, indent=2),
         company_overrides_json=json.dumps(job_state.get("company_overrides") or {}, indent=2),
         job_state_json=json.dumps(
-            {k: v for k, v in (job_state or {}).items() if k != "company_overrides"}, indent=2
+            {k: v for k, v in _without_custom_questions(job_state).items() if k != "company_overrides"},
+            indent=2,
         ),
         version=version,
         current_jd_json=json.dumps(current_jd or {}, indent=2),

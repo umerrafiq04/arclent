@@ -902,6 +902,7 @@ def apply_field_changes(
     job_state.setdefault("required_skills", [])
     job_state.setdefault("preferred_skills", [])
     job_state.setdefault("responsibilities", [])
+    job_state.setdefault("custom_questions", [])
     job_state.setdefault("company_overrides", {})
 
     for key, value in (field_updates or {}).items():
@@ -931,6 +932,15 @@ def apply_updates(state: GraphState, config: RunnableConfig) -> dict:
 
     intent = analysis.get("intent")
 
+    # custom_questions is recruiter-manual-only (see JobState's comment) — the chat LLM must never
+    # write to it, no matter what a future prompt tweak might accidentally invite it to try.
+    # Deterministic guard, not prompt-trusted: strip any such op before it's ever applied. The
+    # draft panel's own Custom Questions section writes through a separate, non-LLM endpoint
+    # (patch_job_state) that isn't filtered here, so recruiter edits are unaffected.
+    llm_list_operations = [
+        op for op in (analysis.get("list_operations") or []) if op.get("field") != "custom_questions"
+    ]
+
     # Off-topic / document-review turns carry no confirmed job content — skip everything.
     # Advice turns may still state a real fact (e.g. the job title) alongside the question, so
     # scalar field_updates still apply — but the advice itself is always skill-shaped, so
@@ -944,7 +954,7 @@ def apply_updates(state: GraphState, config: RunnableConfig) -> dict:
         job_state = apply_field_changes(
             original_job_state,
             analysis.get("field_updates"),
-            analysis.get("list_operations"),
+            llm_list_operations,
             analysis.get("company_overrides"),
         )
 

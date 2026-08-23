@@ -36,13 +36,20 @@ class JobState(BaseModel):
     deadline: str | None = None
     additional_information: str | None = None
     company_overrides: dict[str, str] = Field(default_factory=dict)
+    # Recruiter-authored screening questions — manually typed in the draft panel only, never
+    # touched by the AI in any way: excluded from every LLM prompt (chat, generation, refinement —
+    # see prompts.py) and deterministically stripped from the chat LLM's own list_operations in
+    # apply_updates before they're ever applied, even if a future prompt change somehow got the
+    # model to try. The one path allowed to write it is the direct, non-LLM job-state PATCH
+    # endpoint the draft panel's Custom Questions section calls.
+    custom_questions: list[str] = Field(default_factory=list)
 
 
 SCALAR_JOB_FIELDS = {
     "job_title", "job_category", "experience", "location", "work_mode",
     "employment_type", "education", "salary", "deadline", "additional_information",
 }
-LIST_JOB_FIELDS = {"required_skills", "preferred_skills", "responsibilities"}
+LIST_JOB_FIELDS = {"required_skills", "preferred_skills", "responsibilities", "custom_questions"}
 COMPANY_OVERRIDE_FIELDS = {
     "company_overview", "company_culture", "benefits",
     "work_life_balance", "why_join_us",
@@ -94,8 +101,15 @@ INTENTS_BLOCK_LIST_AND_OVERRIDE_CHANGES = {
 }
 
 
+# Shared by TurnAnalysis.list_operations (the chat LLM's own structured output) AND the draft
+# panel's direct, non-LLM job-state PATCH endpoint (see JobStatePatch in schemas.py) — the same
+# validation model serves both call sites. custom_questions is included here so the direct-patch
+# path can write it, but apply_updates (nodes.py) deterministically drops any list_operations
+# entry targeting custom_questions BEFORE applying the chat LLM's own output, so this type
+# allowing it is not itself a guarantee the AI can never touch it — see apply_updates for the
+# actual enforcement.
 class ListOperation(BaseModel):
-    field: Literal["required_skills", "preferred_skills", "responsibilities"]
+    field: Literal["required_skills", "preferred_skills", "responsibilities", "custom_questions"]
     operation: Literal["ADD", "REMOVE", "REPLACE"]
     values: list[str]
 
