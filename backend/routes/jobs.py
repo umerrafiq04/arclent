@@ -108,16 +108,12 @@ def apply_to_job(job_id: str, body: JobApplicationRequest) -> dict:
         raise HTTPException(status_code=404, detail="Job not found")
     if not job.get("accepting_applications"):
         raise HTTPException(status_code=400, detail="This job is no longer accepting applications.")
-    name = body.applicant_name.strip()
-    email = body.applicant_email.strip()
-    if not name or not email:
-        raise HTTPException(status_code=400, detail="Name and email are required.")
     # Only keep answers for questions that actually exist on this job right now — the recruiter may
     # have edited custom_questions since the candidate loaded the page, so the submitted keys aren't
     # trusted as-is.
     current_questions = set(job.get("custom_questions") or [])
     answers = {q: a for q, a in body.answers.items() if q in current_questions}
-    return create_application(job_id, name, email, answers)
+    return create_application(job_id, answers)
 
 
 @router.get("/{session_id}/applications")

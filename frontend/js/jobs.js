@@ -6,8 +6,6 @@ const backLink = document.getElementById("back-link");
 const applyModalOverlay = document.getElementById("apply-modal-overlay");
 const applyModalClose = document.getElementById("apply-modal-close");
 const applyForm = document.getElementById("apply-form");
-const applyNameInput = document.getElementById("apply-name");
-const applyEmailInput = document.getElementById("apply-email");
 const applyQuestionsContainer = document.getElementById("apply-questions");
 const applyFormError = document.getElementById("apply-form-error");
 const applySubmitBtn = document.getElementById("apply-submit-btn");
@@ -334,11 +332,7 @@ applyForm.addEventListener("submit", async (e) => {
   const originalText = applySubmitBtn.textContent;
   applySubmitBtn.textContent = "Submitting…";
   try {
-    await api.applyToJob(applyJobId, {
-      applicant_name: applyNameInput.value.trim(),
-      applicant_email: applyEmailInput.value.trim(),
-      answers,
-    });
+    await api.applyToJob(applyJobId, { answers });
     applyForm.style.display = "none";
     applySuccess.style.display = "block";
   } catch (err) {

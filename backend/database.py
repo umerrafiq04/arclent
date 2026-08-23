@@ -531,16 +531,17 @@ def _application_row_to_dict(row: sqlite3.Row | None) -> dict | None:
     return data
 
 
-def create_application(
-    job_id: str, applicant_name: str, applicant_email: str, answers: dict, db_path: str = APP_DB_PATH
-) -> dict:
-    """A candidate's submission on a published job's Apply form. answers is keyed by the exact
-    question text (custom_questions has no stable id of its own) — {question_text: answer_text}.
+def create_application(job_id: str, answers: dict, db_path: str = APP_DB_PATH) -> dict:
+    """A candidate's submission on a published job's Apply form — just their answers to that job's
+    own custom_questions, no name/email collected (an explicit founder decision — the applicant_*
+    columns stay NOT NULL and are simply stored empty rather than migrating them away, avoiding a
+    destructive schema change for two columns that may be reintroduced later). answers is keyed by
+    the exact question text (custom_questions has no stable id of its own) — {question: answer}.
     """
     with get_connection(db_path) as conn:
         cursor = conn.execute(
             "INSERT INTO applications (job_id, applicant_name, applicant_email, answers) VALUES (?, ?, ?, ?)",
-            (job_id, applicant_name, applicant_email, json.dumps(answers)),
+            (job_id, "", "", json.dumps(answers)),
         )
         conn.commit()
         row = conn.execute("SELECT * FROM applications WHERE id = ?", (cursor.lastrowid,)).fetchone()
