@@ -1,3 +1,4 @@
+import json
 import logging
 import random
 import re
@@ -213,6 +214,34 @@ def load_context(state: GraphState, config: RunnableConfig) -> dict:
     return updates
 
 
+def _trailing_draft_reminder(job_state: dict) -> str:
+    """Appended to the end of the CURRENT human message before every analyze_turn call, not just
+    stated once near the top of the (long) system prompt — verified live this matters: the same
+    "this is the source of truth" instruction placed only at the top wasn't reliable against the
+    model favoring an earlier, now-stale value mentioned in the conversation history instead (a
+    recency-bias problem, not a data-freshness one — job_state itself was always already correct).
+    This duplicates the actual CURRENT values right next to where generation happens, rather than
+    just pointing back at an earlier block the model has to remember to trust. Covers every field
+    generically (not just the handful of specific phrasings _detect_field_value_query recognizes),
+    since real recruiter phrasing varies too much to fully enumerate.
+    """
+    visible = {
+        k: v
+        for k, v in (job_state or {}).items()
+        if k not in ("company_overrides", "custom_questions") and v
+    }
+    if not visible:
+        return ""
+    return (
+        "\n\n[Background note, not part of the recruiter's message above: the draft's state "
+        "immediately BEFORE this message is given below. If the recruiter just stated something new "
+        "in their message, that new statement takes priority as always. But whenever you state or "
+        "confirm what a field CURRENTLY is — including if they're asking a direct question about it "
+        "— use these values, not anything said earlier in this conversation, since the recruiter can "
+        f"edit the draft panel directly, outside chat, at any time: {json.dumps(visible)}]"
+    )
+
+
 def analyze_turn(state: GraphState) -> dict:
     system_prompt = build_system_prompt(
         company_profile=state.get("company_profile", {}),
@@ -223,7 +252,11 @@ def analyze_turn(state: GraphState) -> dict:
         jd_stale=bool(state.get("jd_stale", False)),
         recruiter_name=state.get("recruiter_name"),
     )
-    messages = [SystemMessage(content=system_prompt), *state["messages"]]
+    raw_messages = list(state["messages"])
+    reminder = _trailing_draft_reminder(state.get("job_state") or {})
+    if reminder and raw_messages and isinstance(raw_messages[-1], HumanMessage):
+        raw_messages[-1] = HumanMessage(content=(raw_messages[-1].content or "") + reminder)
+    messages = [SystemMessage(content=system_prompt), *raw_messages]
 
     try:
         analysis = call_structured(TurnAnalysis, messages, retries=2)
@@ -504,8 +537,8 @@ def analyze_turn(state: GraphState) -> dict:
     # the normal path. Detected structurally: does the QUESTION portion of this turn's response
     # (never an acknowledgment clause mentioning salary in passing — same sentence-isolation as the
     # _KEYWORD_FIELD_HINTS sniffing above) actually pose a salary question, via the same keyword
-    # matcher _detect_field_value_query uses above. Only appends when a currency is known for the
-    # recruiter's own location AND the model didn't already include that symbol itself.
+    # matcher _detect_field_value_query uses above. Only touches the response when a currency is
+    # known for the recruiter's own location.
     response_question_sentences = [s for s in re.split(r"(?<=[.!?])\s+", analysis.response or "") if "?" in s]
     response_question_text = " ".join(response_question_sentences) or (analysis.response or "")
     if _FIELD_QUERY_KEYWORDS["salary"].search(response_question_text):
@@ -518,10 +551,23 @@ def analyze_turn(state: GraphState) -> dict:
             "location"
         )
         currency_symbol = _currency_symbol_for_location(prospective_location)
-        if currency_symbol and currency_symbol not in (analysis.response or ""):
-            analysis = analysis.model_copy(
-                update={"response": f"{(analysis.response or '').rstrip()} (in {currency_symbol}, based on the location you gave)"}
+        response_text_now = analysis.response or ""
+        if currency_symbol:
+            wrong_symbol_present = any(
+                sym in response_text_now for sym in _ALL_CURRENCY_SYMBOLS if sym != currency_symbol
             )
+            if wrong_symbol_present:
+                # The model's own phrasing baked in a numeric example in the WRONG currency (e.g.
+                # "$40k–$60k" for a Delhi NCR posting) — reported live. Converting the figure isn't
+                # the fix (a $ amount run through some exchange rate is still a fabricated number),
+                # so the whole question is replaced with a clean, currency-correct version instead
+                # of leaving a contradictory dollar example sitting next to a "use ₹" hint in the
+                # same message.
+                analysis = analysis.model_copy(update={"response": _salary_question({"location": prospective_location})})
+            elif currency_symbol not in response_text_now:
+                analysis = analysis.model_copy(
+                    update={"response": f"{response_text_now.rstrip()} (in {currency_symbol}, based on the location you gave)"}
+                )
 
     # Never trust enough_information=true at face value: cross-check it against the same
     # deterministic checklist ready_to_generate() relies on. Verified live that the model reaches
@@ -886,6 +932,11 @@ _CURRENCY_BY_LOCATION_KEYWORDS = [
 ]
 
 
+# Every symbol _CURRENCY_BY_LOCATION_KEYWORDS can produce — used to detect a MISMATCHED currency
+# (a different symbol than the one the recruiter's own location implies), not just a missing one.
+_ALL_CURRENCY_SYMBOLS = list({symbol for _pattern, symbol in _CURRENCY_BY_LOCATION_KEYWORDS})
+
+
 def _currency_symbol_for_location(location: str | None) -> str | None:
     if not location:
         return None
@@ -907,6 +958,23 @@ def _salary_question(job_state: dict) -> str:
     base = _CHECKLIST_QUESTIONS["salary"]
     symbol = _currency_symbol_for_location(job_state.get("location"))
     return f"{base} (in {symbol}, based on the location you gave)" if symbol else base
+
+
+def _sanitize_salary_chips(chips: list[str], expected_symbol: str | None) -> list[str]:
+    """Model-supplied salary chips sometimes bake in a numeric example in the WRONG currency for
+    the recruiter's own location — reported live: "$50,000–$70,000" suggested for a Delhi NCR
+    posting. Converting the figure isn't the fix (a $ amount run through some exchange rate is
+    still a fabricated number, exactly what this app avoids elsewhere) — any chip mentioning a
+    DIFFERENT currency symbol than expected is dropped instead; if that empties the list, fall back
+    to the safe, currency-neutral "Competitive, negotiable" (never left with zero chips — salary is
+    mandatory, so an empty chip list here would be the exact "nothing tappable" gap already fixed
+    once for this field).
+    """
+    if not expected_symbol:
+        return chips
+    wrong_symbols = [s for s in _ALL_CURRENCY_SYMBOLS if s != expected_symbol]
+    filtered = [c for c in chips if not any(sym in c for sym in wrong_symbols)]
+    return filtered or _CHECKLIST_CHIPS["salary"]
 
 # Deterministically defaulted the moment a job_title exists, never asked about at all — per the
 # same founder decision as the shrunk checklist above. The recruiter can still change any of these
@@ -1312,6 +1380,31 @@ def apply_updates(state: GraphState, config: RunnableConfig) -> dict:
         else:
             suggested_options = _checklist_chips_for(raw_asking_about_field)
         options_multi_select = False
+
+    # Salary chips get the same currency sanitization as the question text above, regardless of
+    # which branch above produced them — the model's OWN chips (not just its own phrasing) can also
+    # bake in a numeric example in the wrong currency for the recruiter's location (reported live:
+    # "$50,000–$70,000" suggested for a Delhi NCR posting). See _sanitize_salary_chips. Triggered by
+    # the SAME structural text check analyze_turn's own currency fix uses (does the response
+    # actually pose a salary question), not just raw_asking_about_field alone — verified live that
+    # relying on the model's own asking_about_field classification here missed real salary-chip
+    # turns where the model's structured field didn't say "salary" even though its response and
+    # chips clearly were about it (the response TEXT still got corrected via that same signal in
+    # analyze_turn, but the CHIPS, sanitized here in a different function, silently didn't).
+    response_text_for_chip_check = analysis.get("response", "") or ""
+    response_question_sentences_for_chip_check = [
+        s for s in re.split(r"(?<=[.!?])\s+", response_text_for_chip_check) if "?" in s
+    ]
+    response_is_salary_question = bool(
+        _FIELD_QUERY_KEYWORDS["salary"].search(
+            " ".join(response_question_sentences_for_chip_check) or response_text_for_chip_check
+        )
+    )
+    if raw_asking_about_field == "salary" or response_is_salary_question:
+        # job_state (not state.get("job_state")) — the local variable already merged THIS turn's
+        # own field_updates in above, so a location set in the SAME combined turn is still seen.
+        expected_symbol = _currency_symbol_for_location(job_state.get("location"))
+        suggested_options = _sanitize_salary_chips(suggested_options, expected_symbol)
 
     # A dedicated "Skip this" button already renders in the UI whenever asking_about_field is set
     # (see appendSkipButton in job-modal.js) — a suggested_options chip whose ONLY content is the
