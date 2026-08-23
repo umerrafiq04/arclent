@@ -32,7 +32,7 @@ const JD_LIST_FIELDS = [
 // Recruiter-typed screening questions — job_state-backed like JOB_LIST_FIELDS above, but rendered
 // last (after Benefits) rather than grouped with those, matching the draft panel's own section
 // order. Never AI-touched (see JobState.custom_questions on the backend).
-const CUSTOM_QUESTIONS_FIELD = ["custom_questions", "Custom Questions"];
+const CUSTOM_QUESTIONS_FIELD = ["custom_questions", "Questions"];
 
 // Stacked label/value fields shown right under the title, before the full description body —
 // only the ones the job actually has get rendered.

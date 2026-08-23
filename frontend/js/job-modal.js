@@ -741,7 +741,7 @@
       // list_operations, not jd_list_operations), just deliberately excluded from every LLM call.
       body.appendChild(
         listEditor(
-          "Custom Questions",
+          "Questions",
           jobState.custom_questions,
           (v) => patchField({ list_operations: [{ field: "custom_questions", operation: "ADD", values: [v] }] }),
           (v) => patchField({ list_operations: [{ field: "custom_questions", operation: "REMOVE", values: [v] }] }),
