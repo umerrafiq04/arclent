@@ -1415,6 +1415,15 @@ def apply_updates(state: GraphState, config: RunnableConfig) -> dict:
     if asking_about_field and suggested_options == _GENERIC_FALLBACK_OPTIONS:
         suggested_options = []
 
+    # Absolute last resort — guarantee something tappable on every genuine question (reported live:
+    # "bot sometimes fails to suggest chips"). The field-specific overrides above cover every
+    # RECOGNIZED case; this catches whatever's left — an unrecognized field, or the model asking a
+    # question without ever setting asking_about_field at all. Only fires when there's truly nothing
+    # else tappable: a dedicated Skip button (asking_about_field set) already covers that case, so
+    # this never stacks a redundant chip alongside it.
+    if reply_is_a_question and not suggested_options and not asking_about_field:
+        suggested_options = _GENERIC_FALLBACK_OPTIONS
+
     return {
         "job_state": job_state,
         "phase": phase,
