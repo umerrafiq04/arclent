@@ -298,15 +298,21 @@ def patch_job_state(session_id: str, body: JobStatePatch, user: dict = Depends(g
         [op.model_dump() for op in body.list_operations],
         body.company_overrides,
     )
-    # custom_questions never appears anywhere in the generated JD (see JobState's comment) — a
-    # change to it alone shouldn't flag the JD as stale, same reasoning as jd_text_updates/
-    # jd_list_operations below not marking stale for a direct fix to the drafted content itself.
-    content_changed = (
+    # ANY change (including custom_questions) counts for the phase transition below — an edit that
+    # hasn't been pushed to the live published row yet must always re-enable "Publish Edit", or a
+    # recruiter who only added a screening question would see the button stuck on the disabled
+    # "Published ✓" state with no way to actually publish their change (a real, reported bug).
+    content_changed = job_state != original_job_state
+    # jd_stale is a narrower, JD-specific signal — custom_questions never appears anywhere in the
+    # generated JD (see JobState's comment), so a change to it alone shouldn't flag the JD as out of
+    # date, same reasoning as jd_text_updates/jd_list_operations below not marking stale for a
+    # direct fix to the drafted content itself.
+    content_changed_for_jd = (
         {k: v for k, v in job_state.items() if k != "custom_questions"}
         != {k: v for k, v in original_job_state.items() if k != "custom_questions"}
     )
     jd_versions_exist = bool(state.get("jd_versions"))
-    jd_stale = (jd_versions_exist and content_changed) or state.get("jd_stale", False)
+    jd_stale = (jd_versions_exist and content_changed_for_jd) or state.get("jd_stale", False)
 
     phase = state.get("phase", "collecting")
     if phase == "published" and content_changed:
