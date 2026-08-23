@@ -282,6 +282,37 @@ def analyze_turn(state: GraphState) -> dict:
             last_human_text = (m.content or "").strip()
             break
 
+    # The model's own asking_about_field can be stale on a "combined" turn (acknowledge one answer
+    # + ask the next question, all in the same response) — verified live: after answering the
+    # platforms question with "Discord, Twitch", the model's response correctly asked about
+    # location next, but still reported asking_about_field="platforms" (a field this SAME turn's
+    # own list_operations just resolved) — which then fed the WRONG chip set (platforms' own chips,
+    # or a stale Skip fallback) for a question that was actually about something else entirely.
+    # Deterministic correction, not a prompt hope (same lesson as everywhere else in this file): if
+    # the model's own asking_about_field names a field that was EMPTY before this turn but is now
+    # resolved by this turn's own field_updates/list_operations, it can't genuinely still be asking
+    # about that field — recompute the real next unresolved checklist item instead. Scoped to
+    # "resolved by THIS turn" specifically (not just "already has a value"), so a legitimate re-ask
+    # of an earlier-set field (e.g. confirming a changed salary) is never mistaken for staleness.
+    if analysis.asking_about_field and not (state.get("job_state") or {}).get(analysis.asking_about_field):
+        prospective_job_state_for_stale_check = apply_field_changes(
+            state.get("job_state") or {},
+            analysis.field_updates,
+            [op.model_dump() for op in analysis.list_operations],
+        )
+        if prospective_job_state_for_stale_check.get(analysis.asking_about_field):
+            skipped_for_stale_check = set(state.get("skipped_checklist_fields") or [])
+            corrected_next_field = _next_checklist_prompt(prospective_job_state_for_stale_check, skipped_for_stale_check)
+            if corrected_next_field:
+                _, corrected_field, corrected_chips = corrected_next_field
+                analysis = analysis.model_copy(
+                    update={
+                        "asking_about_field": corrected_field,
+                        "suggested_options": corrected_chips,
+                        "options_multi_select": corrected_field in _MULTI_SELECT_CHECKLIST_FIELDS,
+                    }
+                )
+
     # Catch an internally-contradictory experience statement before anything else — "fresher"
     # (implying little-to-no prior experience) stated alongside a genuine multi-year figure in the
     # SAME message (e.g. "hire a fresher with 5 years of exp") is logically inconsistent. Verified
@@ -1137,7 +1168,24 @@ _KEYWORD_FIELD_HINTS = (
     ("experience", ("years of experience", "how many years", "experience level")),
     ("work_mode", ("remote, hybrid", "hybrid, or onsite", "hybrid or onsite", "remote or onsite", "onsite, hybrid")),
     ("employment_type", ("full-time, part-time", "full-time, or part-time", "part-time, contract")),
+    # platforms/location/salary — reported live: on a "combined" turn (acknowledge the platforms
+    # answer + ask about location, all in one response), the model sometimes leaves
+    # asking_about_field entirely null for the new question, and since these three are mandatory
+    # (not in OPTIONAL_SKIPPABLE_FIELDS), NOTHING downstream could recover a real field name for
+    # them — the turn fell through to the model's own (often bogus, e.g. a stray "Skip") chips
+    # untouched. See _MANDATORY_CHECKLIST_HINT_FIELDS below — these three are matched even while
+    # "in missing" (the normal, expected state for an unresolved mandatory field), unlike the three
+    # above which skip that case.
+    ("platforms", ("platform(s) are you hiring", "which platform")),
+    ("location", ("city or region", "will this role be based", "specific city", "which city")),
+    ("salary", ("salary range", "what's the salary", "salary for this role")),
 )
+
+# Fields matched by _KEYWORD_FIELD_HINTS above even when "in missing" — for these three, being
+# flagged as missing IS the normal state while the question is still unresolved (they're mandatory,
+# always genuinely needed until answered), unlike the experience/work_mode/employment_type entries,
+# where "in missing" signals something more specific worth deferring to instead.
+_MANDATORY_CHECKLIST_HINT_FIELDS = {"platforms", "location", "salary"}
 
 # Absolute last resort when a question produced zero options and no field could even be guessed
 # (e.g. the model failed to supply its own role-specific skill/responsibility suggestions for an
@@ -1364,12 +1412,19 @@ def apply_updates(state: GraphState, config: RunnableConfig) -> dict:
         question_sentences = [s for s in re.split(r"(?<=[.!?])\s+", response_text) if "?" in s]
         question_text_lower = (" ".join(question_sentences) if question_sentences else response_text).lower()
         for candidate_field, phrases in _KEYWORD_FIELD_HINTS:
-            if candidate_field in missing:
+            if candidate_field in missing and candidate_field not in _MANDATORY_CHECKLIST_HINT_FIELDS:
                 continue
             if any(phrase in question_text_lower for phrase in phrases):
                 asking_about_field = candidate_field
                 raw_asking_about_field = candidate_field
                 break
+        # A recovered field can itself be mandatory (platforms/location/salary) — re-apply the same
+        # "no Skip button for a mandatory field" rule the nulling check above already enforced for
+        # the model's own asking_about_field. This recovery runs AFTER that check (it only fires
+        # when asking_about_field was still null), so without this, a just-recovered mandatory
+        # field would stay set and incorrectly show a Skip button it must never have.
+        if asking_about_field in _MANDATORY_CHECKLIST_HINT_FIELDS:
+            asking_about_field = None
 
     # A recruiter who verbally declines an optional field ("no preference", "not needed", "we can
     # skip that") never touches the literal Skip button — but ready_to_generate()/checklist_resolved

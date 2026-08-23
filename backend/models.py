@@ -61,8 +61,10 @@ COMPANY_OVERRIDE_FIELDS = {
 }
 
 # Fields a recruiter can decline to answer without blocking the conversation. job_title, location,
-# and salary are never in here — sufficiency.py's hard floor never lets any of them go missing (an
-# explicit founder decision: these three are mandatory, no "Skip this" affordance at all).
+# salary, and platforms are never in here — sufficiency.py's hard floor never lets any of them go
+# missing (an explicit founder decision: the guided flow only proactively asks a small handful of
+# questions at all, so none of them should have a Skip affordance — platforms was originally here,
+# moved out per a later correction).
 # required_skills/responsibilities ARE in here even though the hard floor requires at least one of
 # the two: apply_updates only ever lets the "Skip this" affordance through for whichever of the
 # pair is NOT the one currently satisfying the hard floor (checked against the
@@ -71,7 +73,7 @@ COMPANY_OVERRIDE_FIELDS = {
 OPTIONAL_SKIPPABLE_FIELDS = {
     "job_category", "experience", "work_mode", "employment_type",
     "education", "deadline", "additional_information", "preferred_skills",
-    "required_skills", "responsibilities", "platforms",
+    "required_skills", "responsibilities",
 }
 
 
