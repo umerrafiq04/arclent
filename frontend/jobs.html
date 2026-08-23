@@ -37,10 +37,25 @@
   </main>
 
   <div id="apply-modal-overlay" class="modal-overlay" style="display: none">
-    <div class="modal">
-      <h2>Applications Coming Soon</h2>
-      <p>Online applications for this role aren't open yet — check back soon.</p>
-      <button type="button" id="apply-modal-close" class="btn btn-primary">Got it</button>
+    <div class="modal modal-wide">
+      <form id="apply-form" class="profile-form">
+        <h2>Apply for this role</h2>
+        <div id="apply-form-error" class="error-banner" style="display: none"></div>
+        <label>Full Name<input type="text" id="apply-name" required /></label>
+        <label>Email<input type="email" id="apply-email" required /></label>
+        <div id="apply-questions"></div>
+        <div class="form-actions">
+          <button type="button" id="apply-modal-close" class="btn">Cancel</button>
+          <button type="submit" id="apply-submit-btn" class="btn btn-primary">Submit Application</button>
+        </div>
+      </form>
+      <div id="apply-success" style="display: none">
+        <h2>Application submitted!</h2>
+        <p>Thanks for applying — the hiring team will be in touch if there's a match.</p>
+        <div class="form-actions">
+          <button type="button" id="apply-success-close" class="btn btn-primary">Close</button>
+        </div>
+      </div>
     </div>
   </div>
 

@@ -139,6 +139,8 @@ const api = {
 
   getPublicJobs: () => apiRequest("/public/jobs"),
   getPublicJob: (jobId) => apiRequest(`/public/jobs/${encodeURIComponent(jobId)}`),
+  applyToJob: (jobId, payload) =>
+    apiRequest(`/public/jobs/${encodeURIComponent(jobId)}/apply`, { method: "POST", body: JSON.stringify(payload) }),
 
   getAdminJobs: () => apiRequest("/admin/jobs"),
   getAdminJob: (id) => apiRequest(`/admin/jobs/${encodeURIComponent(id)}`),

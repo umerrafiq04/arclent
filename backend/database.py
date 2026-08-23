@@ -190,6 +190,25 @@ def _migration_008_custom_questions(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE jobs ADD COLUMN custom_questions TEXT")
 
 
+def _migration_009_applications(conn: sqlite3.Connection) -> None:
+    # A candidate's submission on a published job's Apply form — name/email plus their answers to
+    # that job's own custom_questions (if any), keyed by question text since custom_questions has
+    # no stable id of its own and can be edited by the recruiter after a job is published.
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS applications (
+            id                INTEGER PRIMARY KEY AUTOINCREMENT,
+            job_id            TEXT NOT NULL REFERENCES jobs(job_id),
+            applicant_name    TEXT NOT NULL,
+            applicant_email   TEXT NOT NULL,
+            answers           TEXT,
+            submitted_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE INDEX IF NOT EXISTS idx_applications_job_id ON applications(job_id);
+        """
+    )
+
+
 MIGRATIONS = {
     1: _migration_001_users,
     2: _migration_002_auth_sessions,
@@ -199,6 +218,7 @@ MIGRATIONS = {
     6: _migration_006_accepting_applications,
     7: _migration_007_deadline,
     8: _migration_008_custom_questions,
+    9: _migration_009_applications,
 }
 
 
@@ -501,6 +521,38 @@ def delete_job(session_id: str, db_path: str = APP_DB_PATH) -> bool:
         cursor = conn.execute("DELETE FROM jobs WHERE session_id = ?", (session_id,))
         conn.commit()
         return cursor.rowcount > 0
+
+
+def _application_row_to_dict(row: sqlite3.Row | None) -> dict | None:
+    if row is None:
+        return None
+    data = dict(row)
+    data["answers"] = json.loads(data["answers"]) if data.get("answers") else {}
+    return data
+
+
+def create_application(
+    job_id: str, applicant_name: str, applicant_email: str, answers: dict, db_path: str = APP_DB_PATH
+) -> dict:
+    """A candidate's submission on a published job's Apply form. answers is keyed by the exact
+    question text (custom_questions has no stable id of its own) — {question_text: answer_text}.
+    """
+    with get_connection(db_path) as conn:
+        cursor = conn.execute(
+            "INSERT INTO applications (job_id, applicant_name, applicant_email, answers) VALUES (?, ?, ?, ?)",
+            (job_id, applicant_name, applicant_email, json.dumps(answers)),
+        )
+        conn.commit()
+        row = conn.execute("SELECT * FROM applications WHERE id = ?", (cursor.lastrowid,)).fetchone()
+        return _application_row_to_dict(row)
+
+
+def list_applications_for_job(job_id: str, db_path: str = APP_DB_PATH) -> list[dict]:
+    with get_connection(db_path) as conn:
+        rows = conn.execute(
+            "SELECT * FROM applications WHERE job_id = ? ORDER BY submitted_at DESC", (job_id,)
+        ).fetchall()
+        return [_application_row_to_dict(r) for r in rows]
 
 
 _JOB_LIST_COLUMNS = """

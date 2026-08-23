@@ -102,3 +102,13 @@ class UserResponse(BaseModel):
 
 class AcceptingApplicationsUpdate(BaseModel):
     accepting_applications: bool
+
+
+class JobApplicationRequest(BaseModel):
+    """A candidate's submission on a published job's Apply form. answers is keyed by the exact
+    question text from that job's own custom_questions — validated server-side against the job's
+    actual current list, not trusted as-is (see apply_to_job in routes/jobs.py).
+    """
+    applicant_name: str
+    applicant_email: str
+    answers: dict[str, str] = Field(default_factory=dict)

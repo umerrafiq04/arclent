@@ -5,6 +5,16 @@ const detailBody = document.getElementById("detail-body");
 const backLink = document.getElementById("back-link");
 const applyModalOverlay = document.getElementById("apply-modal-overlay");
 const applyModalClose = document.getElementById("apply-modal-close");
+const applyForm = document.getElementById("apply-form");
+const applyNameInput = document.getElementById("apply-name");
+const applyEmailInput = document.getElementById("apply-email");
+const applyQuestionsContainer = document.getElementById("apply-questions");
+const applyFormError = document.getElementById("apply-form-error");
+const applySubmitBtn = document.getElementById("apply-submit-btn");
+const applySuccess = document.getElementById("apply-success");
+const applySuccessClose = document.getElementById("apply-success-close");
+
+let applyJobId = null;
 
 const JD_TEXT_FIELDS = [
   ["job_summary", "Job Summary"],
@@ -28,11 +38,6 @@ const JD_LIST_FIELDS = [
   ["stand_out", "Ways to Stand Out"],
   ["benefits", "Benefits / Employee Experience"],
 ];
-
-// Recruiter-typed screening questions — job_state-backed like JOB_LIST_FIELDS above, but rendered
-// last (after Benefits) rather than grouped with those, matching the draft panel's own section
-// order. Never AI-touched (see JobState.custom_questions on the backend).
-const CUSTOM_QUESTIONS_FIELD = ["custom_questions", "Questions"];
 
 // Stacked label/value fields shown right under the title, before the full description body —
 // only the ones the job actually has get rendered.
@@ -194,11 +199,8 @@ function jdSections(job) {
     if (!items || items.length === 0) return;
     frag.appendChild(jdListField(label, items));
   });
-  const [cqKey, cqLabel] = CUSTOM_QUESTIONS_FIELD;
-  const customQuestions = job[cqKey];
-  if (customQuestions && customQuestions.length > 0) {
-    frag.appendChild(jdListField(cqLabel, customQuestions));
-  }
+  // Screening questions are deliberately NOT shown here — they belong to the Apply flow, where a
+  // candidate answers them directly, not to the public job description itself. See applyModal.
   return frag;
 }
 
@@ -253,9 +255,7 @@ async function showDetail(jobId) {
     if (job.accepting_applications) {
       applyBtn.className = "btn btn-primary";
       applyBtn.textContent = "Apply Now";
-      applyBtn.addEventListener("click", () => {
-        applyModalOverlay.style.display = "flex";
-      });
+      applyBtn.addEventListener("click", () => openApplyModal(job));
     } else {
       applyBtn.className = "btn";
       applyBtn.textContent = "Applications Closed";
@@ -287,12 +287,67 @@ backLink.addEventListener("click", (e) => {
   showList();
 });
 
-applyModalClose.addEventListener("click", () => {
+// Screening questions the recruiter added (job.custom_questions — see JobState.custom_questions
+// on the backend) render here as answerable inputs, one per question, keyed by the exact question
+// text (no stable id of its own, see JobApplicationRequest on the backend) — this is the ONE place
+// they're shown to a candidate; the public job description itself deliberately never displays them
+// (see jdSections above).
+function openApplyModal(job) {
+  applyJobId = job.job_id;
+  applyForm.reset();
+  clearChildren(applyQuestionsContainer);
+  (job.custom_questions || []).forEach((question, index) => {
+    const label = document.createElement("label");
+    label.textContent = question;
+    const input = document.createElement("input");
+    input.type = "text";
+    input.dataset.question = question;
+    input.id = `apply-question-${index}`;
+    label.appendChild(input);
+    applyQuestionsContainer.appendChild(label);
+  });
+  applyFormError.style.display = "none";
+  applyForm.style.display = "flex";
+  applySuccess.style.display = "none";
+  applyModalOverlay.style.display = "flex";
+}
+
+function closeApplyModal() {
   applyModalOverlay.style.display = "none";
-});
+}
+
+applyModalClose.addEventListener("click", closeApplyModal);
+applySuccessClose.addEventListener("click", closeApplyModal);
 
 applyModalOverlay.addEventListener("click", (e) => {
-  if (e.target === applyModalOverlay) applyModalOverlay.style.display = "none";
+  if (e.target === applyModalOverlay) closeApplyModal();
+});
+
+applyForm.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  applyFormError.style.display = "none";
+  const answers = {};
+  applyQuestionsContainer.querySelectorAll("input[data-question]").forEach((input) => {
+    if (input.value.trim()) answers[input.dataset.question] = input.value.trim();
+  });
+  applySubmitBtn.disabled = true;
+  const originalText = applySubmitBtn.textContent;
+  applySubmitBtn.textContent = "Submitting…";
+  try {
+    await api.applyToJob(applyJobId, {
+      applicant_name: applyNameInput.value.trim(),
+      applicant_email: applyEmailInput.value.trim(),
+      answers,
+    });
+    applyForm.style.display = "none";
+    applySuccess.style.display = "block";
+  } catch (err) {
+    applyFormError.textContent = err.message || "Couldn't submit your application. Please try again.";
+    applyFormError.style.display = "block";
+  } finally {
+    applySubmitBtn.disabled = false;
+    applySubmitBtn.textContent = originalText;
+  }
 });
 
 async function adjustNavForCurrentUser() {

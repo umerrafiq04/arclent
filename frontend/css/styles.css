@@ -802,6 +802,26 @@ a {
   font-size: 14px;
 }
 
+/* Modifier for a modal that holds a real multi-field form (the public Apply form) rather than a
+   short confirmation message — wider, and left-aligned so form labels/inputs read naturally
+   instead of fighting the base .modal's centered text. */
+.modal-wide {
+  max-width: 480px;
+  text-align: left;
+  max-height: 86vh;
+  overflow-y: auto;
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none; /* legacy Edge/IE */
+}
+
+.modal-wide::-webkit-scrollbar {
+  display: none; /* Chrome/Safari/Edge — scroll still works, just no visible track */
+}
+
+.modal-wide h2 {
+  text-align: center;
+}
+
 .detail-back {
   display: inline-block;
   margin-bottom: 16px;

@@ -6,14 +6,16 @@ from fastapi.responses import Response
 
 from backend.auth import get_current_recruiter
 from backend.database import (
+    create_application,
     delete_job,
     get_job_by_session_id,
     get_published_job_by_job_id,
+    list_applications_for_job,
     list_jobs_for_company,
     list_published_jobs,
     set_accepting_applications,
 )
-from backend.schemas import AcceptingApplicationsUpdate
+from backend.schemas import AcceptingApplicationsUpdate, JobApplicationRequest
 
 router = APIRouter(prefix="/api/jobs", tags=["jobs"])
 public_router = APIRouter(prefix="/api/public/jobs", tags=["public-jobs"])
@@ -96,3 +98,34 @@ def get_public_job(job_id: str) -> dict:
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
     return job
+
+
+@public_router.post("/{job_id}/apply")
+def apply_to_job(job_id: str, body: JobApplicationRequest) -> dict:
+    """A candidate's submission on the public Apply form — no auth, anyone can apply."""
+    job = get_published_job_by_job_id(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    if not job.get("accepting_applications"):
+        raise HTTPException(status_code=400, detail="This job is no longer accepting applications.")
+    name = body.applicant_name.strip()
+    email = body.applicant_email.strip()
+    if not name or not email:
+        raise HTTPException(status_code=400, detail="Name and email are required.")
+    # Only keep answers for questions that actually exist on this job right now — the recruiter may
+    # have edited custom_questions since the candidate loaded the page, so the submitted keys aren't
+    # trusted as-is.
+    current_questions = set(job.get("custom_questions") or [])
+    answers = {q: a for q, a in body.answers.items() if q in current_questions}
+    return create_application(job_id, name, email, answers)
+
+
+@router.get("/{session_id}/applications")
+def get_applications_for_job(session_id: str, user: dict = Depends(get_current_recruiter)) -> list[dict]:
+    """Submitted applications for one of the recruiter's own jobs, newest first."""
+    job = get_job_by_session_id(session_id)
+    if not job or job["company_id"] != user["company_id"]:
+        raise HTTPException(status_code=404, detail="Job not found")
+    if not job.get("job_id"):
+        return []
+    return list_applications_for_job(job["job_id"])
