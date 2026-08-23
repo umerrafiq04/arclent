@@ -37,6 +37,7 @@ CREATE TABLE IF NOT EXISTS jobs (
     education                TEXT,
     responsibilities         TEXT,
     custom_questions         TEXT,
+    platforms                TEXT,
     salary                   TEXT,
     additional_information   TEXT,
     company_overrides        TEXT,
@@ -63,7 +64,7 @@ CREATE TABLE IF NOT EXISTS company_sequences (
 );
 """
 
-JSON_LIST_FIELDS = ("required_skills", "preferred_skills", "responsibilities", "custom_questions")
+JSON_LIST_FIELDS = ("required_skills", "preferred_skills", "responsibilities", "custom_questions", "platforms")
 JSON_DICT_FIELDS = ("company_overrides",)
 JSON_OPTIONAL_FIELDS = ("jd_version_1", "jd_version_2", "selected_jd")
 
@@ -209,6 +210,14 @@ def _migration_009_applications(conn: sqlite3.Connection) -> None:
     )
 
 
+def _migration_010_platforms(conn: sqlite3.Connection) -> None:
+    # Which platform(s) this role is hiring for (Facebook, YouTube, Instagram, TikTok, Vimeo,
+    # Twitch, Discord) — a multi-select checklist item, same list-field treatment as
+    # required_skills/preferred_skills/responsibilities/custom_questions.
+    if not _column_exists(conn, "jobs", "platforms"):
+        conn.execute("ALTER TABLE jobs ADD COLUMN platforms TEXT")
+
+
 MIGRATIONS = {
     1: _migration_001_users,
     2: _migration_002_auth_sessions,
@@ -219,6 +228,7 @@ MIGRATIONS = {
     7: _migration_007_deadline,
     8: _migration_008_custom_questions,
     9: _migration_009_applications,
+    10: _migration_010_platforms,
 }
 
 
@@ -324,6 +334,7 @@ def upsert_job_draft(
         "education": job_state.get("education"),
         "responsibilities": json.dumps(job_state.get("responsibilities", [])),
         "custom_questions": json.dumps(job_state.get("custom_questions", [])),
+        "platforms": json.dumps(job_state.get("platforms", [])),
         "salary": job_state.get("salary"),
         "deadline": job_state.get("deadline"),
         "additional_information": job_state.get("additional_information"),
@@ -480,6 +491,7 @@ def finalize_edit(session_id: str, job_state: dict, selected_jd: dict, selected_
         "education": job_state.get("education"),
         "responsibilities": json.dumps(job_state.get("responsibilities", [])),
         "custom_questions": json.dumps(job_state.get("custom_questions", [])),
+        "platforms": json.dumps(job_state.get("platforms", [])),
         "salary": job_state.get("salary"),
         "deadline": job_state.get("deadline"),
         "additional_information": job_state.get("additional_information"),

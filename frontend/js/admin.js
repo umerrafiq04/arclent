@@ -49,6 +49,7 @@ const JOB_LIST_FIELDS = [
   ["responsibilities", "Responsibilities"],
   ["required_skills", "Required Skills"],
   ["preferred_skills", "Preferred Skills"],
+  ["platforms", "Platforms"],
 ];
 
 const JD_LIST_FIELDS = [

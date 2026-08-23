@@ -868,6 +868,19 @@
           (arr) => patchField({ list_operations: [{ field: "preferred_skills", operation: "REPLACE", values: arr }] })
         )
       );
+      // Which platform(s) this role is hiring for — a job_state field like the three above (so it
+      // uses list_operations, not jd_list_operations), settable both via the guided chat checklist
+      // (multi-select chips) and directly here; either path stays in sync since both write the same
+      // job_state.platforms list.
+      body.appendChild(
+        listEditor(
+          "Platforms",
+          jobState.platforms,
+          (v) => patchField({ list_operations: [{ field: "platforms", operation: "ADD", values: [v] }] }),
+          (v) => patchField({ list_operations: [{ field: "platforms", operation: "REMOVE", values: [v] }] }),
+          (arr) => patchField({ list_operations: [{ field: "platforms", operation: "REPLACE", values: arr }] })
+        )
+      );
 
       [
         ["Stand Out", "stand_out"],

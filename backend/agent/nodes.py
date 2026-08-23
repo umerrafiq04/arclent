@@ -390,7 +390,7 @@ def analyze_turn(state: GraphState) -> dict:
                         "response": f"No worries, we'll leave that out. {question}",
                         "asking_about_field": field,
                         "suggested_options": chips,
-                        "options_multi_select": False,
+                        "options_multi_select": field in _MULTI_SELECT_CHECKLIST_FIELDS,
                         "enough_information": False,
                     }
                 )
@@ -457,7 +457,7 @@ def analyze_turn(state: GraphState) -> dict:
                     "response": f"Got it, noted! {question}",
                     "asking_about_field": field,
                     "suggested_options": chips,
-                    "options_multi_select": False,
+                    "options_multi_select": field in _MULTI_SELECT_CHECKLIST_FIELDS,
                 }
             )
         else:
@@ -500,7 +500,7 @@ def analyze_turn(state: GraphState) -> dict:
                         "response": f"Got it, noted! {question}",
                         "asking_about_field": field,
                         "suggested_options": chips,
-                        "options_multi_select": False,
+                        "options_multi_select": field in _MULTI_SELECT_CHECKLIST_FIELDS,
                     }
                 )
             else:
@@ -521,12 +521,24 @@ def analyze_turn(state: GraphState) -> dict:
     # field_updates didn't just set a new value for that field — a genuine "make it $80k" statement
     # is left untouched, that's correctly handled by the model's own extraction already.
     field_query = _detect_field_value_query(last_human_text)
-    if field_query and not (analysis.field_updates or {}).get(field_query):
+    # platforms is a LIST field (list_operations), not a scalar one (field_updates) — "is THIS
+    # turn setting it" needs to check the right place, or a genuine "add Discord too" turn would
+    # get its own answer overwritten with a stale pre-turn snapshot.
+    field_query_already_set_this_turn = (
+        any(op.field == field_query for op in analysis.list_operations)
+        if field_query == "platforms"
+        else bool((analysis.field_updates or {}).get(field_query))
+    )
+    if field_query and not field_query_already_set_this_turn:
         current_value = (state.get("job_state") or {}).get(field_query)
         label = _FIELD_DISPLAY_LABELS.get(field_query, field_query)
+        if field_query == "platforms":
+            display_value = ", ".join(current_value) if current_value else None
+        else:
+            display_value = current_value
         response_text = (
-            f"The current {label} is {current_value}."
-            if current_value
+            f"The current {label} is {display_value}."
+            if display_value
             else f"No {label} has been set yet — want to add one now?"
         )
         analysis = analysis.model_copy(update={"response": response_text})
@@ -634,7 +646,7 @@ def analyze_turn(state: GraphState) -> dict:
                         "response": f"Got it, noted! {question}",
                         "asking_about_field": field,
                         "suggested_options": chips,
-                        "options_multi_select": False,
+                        "options_multi_select": field in _MULTI_SELECT_CHECKLIST_FIELDS,
                         "enough_information": False,
                     }
                 )
@@ -765,6 +777,17 @@ def _extract_fact_backstop(text: str) -> dict:
     return found
 
 
+def _extract_platforms_backstop(text: str) -> list[str]:
+    """Deterministic parse of the recruiter's raw reply against the known platform chip labels
+    (_PLATFORM_OPTIONS) — the platforms question is multi-select, and the chip UI sends a plain
+    comma-separated reply (e.g. "Facebook, YouTube"), so this just needs to recognize which of the
+    known names appear, not parse arbitrary free text. See the gated caller in apply_updates.
+    """
+    if not text:
+        return []
+    return [p for p in _PLATFORM_OPTIONS if re.search(rf"\b{re.escape(p)}\b", text, re.IGNORECASE)]
+
+
 # The recruiter asking what a field is CURRENTLY set to ("what's the salary again?", "what
 # location did I put?") — verified live that prompt instructions alone aren't reliable here: even
 # with the system prompt's job_state_json showing the correct, up-to-date value, the model kept
@@ -782,9 +805,10 @@ _FIELD_QUERY_KEYWORDS = {
     "employment_type": re.compile(r"\bemployment\s*type\b", re.IGNORECASE),
     "experience": re.compile(r"\bexperience\b", re.IGNORECASE),
     "deadline": re.compile(r"\bdeadline\b", re.IGNORECASE),
+    "platforms": re.compile(r"\bplatforms?\b", re.IGNORECASE),
 }
 _FIELD_QUERY_SIGNAL_RE = re.compile(
-    r"\bwhat(?:'s|s)?\b|\bremind me\b|\btell me\b|\bcurrent(?:ly)?\b|\bagain\b", re.IGNORECASE
+    r"\bwhat(?:'s|s)?\b|\bremind me\b|\btell me\b|\bcurrent(?:ly)?\b|\bagain\b|\bwhich\b", re.IGNORECASE
 )
 _FIELD_DISPLAY_LABELS = {
     "salary": "salary",
@@ -794,6 +818,7 @@ _FIELD_DISPLAY_LABELS = {
     "employment_type": "employment type",
     "experience": "experience level",
     "deadline": "application deadline",
+    "platforms": "platform(s)",
 }
 
 
@@ -860,15 +885,26 @@ def _find_fresher_experience_contradiction(text: str) -> tuple[str, str] | None:
 _CHECKLIST_ORDER = [
     "required_skills",
     "responsibilities",
+    "platforms",
     "location",
     "salary",
 ]
 _CHECKLIST_QUESTIONS = {
     "required_skills": "What are the required skills a candidate should have for this role?",
     "responsibilities": "What will this person be responsible for day-to-day?",
+    "platforms": "Which platform(s) are you hiring for?",
     "location": 'Which city or region will this role be based in? You can also say "Worldwide" if it\'s fully remote.',
     "salary": "What's the salary range for this role, if you'd like to share one?",
 }
+
+# The recruiter can pick more than one — see PLATFORM_MULTI_SELECT_FIELDS below and
+# options_multi_select wiring in _next_checklist_prompt's callers.
+_PLATFORM_OPTIONS = ["Facebook", "YouTube", "Instagram", "TikTok", "Vimeo", "Twitch", "Discord"]
+
+# Checklist fields whose chip question is multi-select (the recruiter can tap several before
+# sending) rather than single-select (sends immediately on the first tap) — read by every
+# _next_checklist_prompt caller instead of each one hardcoding options_multi_select=False.
+_MULTI_SELECT_CHECKLIST_FIELDS = {"platforms"}
 # required_skills/responsibilities stay empty, not ["Skip"]: both are still genuinely skippable
 # (see OPTIONAL_SKIPPABLE_FIELDS) whenever this fallback path does get asked, so a chip whose ONLY
 # content is a second, differently-styled "Skip" would duplicate the dedicated "Skip this" button
@@ -885,6 +921,7 @@ _CHECKLIST_CHIPS = {
     "required_skills": [],
     "responsibilities": [],
     "salary": ["Competitive, negotiable"],
+    "platforms": _PLATFORM_OPTIONS,
 }
 
 # location is deliberately NOT a static entry above — reported live as feeling stale (the same
@@ -1052,7 +1089,7 @@ def _fallback_turn_analysis(state: GraphState) -> TurnAnalysis:
                 response=f"Sorry, I had trouble processing that last message — could you confirm: {question}",
                 asking_about_field=field,
                 suggested_options=chips,
-                options_multi_select=False,
+                options_multi_select=field in _MULTI_SELECT_CHECKLIST_FIELDS,
             )
         return TurnAnalysis(
             intent=Intent.CHITCHAT_OR_UNCLEAR,
@@ -1128,6 +1165,7 @@ def apply_field_changes(
     job_state.setdefault("preferred_skills", [])
     job_state.setdefault("responsibilities", [])
     job_state.setdefault("custom_questions", [])
+    job_state.setdefault("platforms", [])
     job_state.setdefault("company_overrides", {})
 
     for key, value in (field_updates or {}).items():
@@ -1197,6 +1235,19 @@ def apply_updates(state: GraphState, config: RunnableConfig) -> dict:
         for field, value in _extract_fact_backstop(last_human_text).items():
             if not job_state.get(field):
                 job_state[field] = value
+        # Platforms is multi-select — the chip UI sends a plain comma-separated reply (e.g.
+        # "Facebook, YouTube"). Deterministic parse against the known chip labels as a backstop for
+        # whatever the model's own list_operations extraction misses, gated to the turn right after
+        # the platforms question was actually asked — unlike the experience/work_mode/employment_type
+        # backstop above (which is safe to run unconditionally on any turn), an unrelated mention of
+        # "Instagram" or "YouTube" elsewhere (e.g. describing the role itself) shouldn't get silently
+        # swept into this field. Only ADDS what's found, never removes/replaces, so this can never
+        # wipe out a broader answer the model DID correctly extract on its own.
+        if state.get("asking_about_field") == "platforms":
+            for platform in _extract_platforms_backstop(last_human_text):
+                current_platforms = job_state.get("platforms") or []
+                if platform not in current_platforms:
+                    job_state["platforms"] = [*current_platforms, platform]
 
     # Deterministic defaults (experience/employment_type/education) — see _apply_default_field_values.
     # Applied AFTER the fact backstop above so a recruiter-stated or extracted value always wins;

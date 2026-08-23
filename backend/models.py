@@ -43,13 +43,18 @@ class JobState(BaseModel):
     # model to try. The one path allowed to write it is the direct, non-LLM job-state PATCH
     # endpoint the draft panel's Custom Questions section calls.
     custom_questions: list[str] = Field(default_factory=list)
+    # Which platform(s) this role is hiring for (Facebook, YouTube, Instagram, TikTok, Vimeo,
+    # Twitch, Discord) — a proactively-asked, multi-select checklist item (see PLATFORM_OPTIONS/
+    # _CHECKLIST_ORDER in nodes.py), unlike custom_questions this one IS AI-touched (the chat LLM
+    # sets it via list_operations same as required_skills) and skippable, not mandatory.
+    platforms: list[str] = Field(default_factory=list)
 
 
 SCALAR_JOB_FIELDS = {
     "job_title", "job_category", "experience", "location", "work_mode",
     "employment_type", "education", "salary", "deadline", "additional_information",
 }
-LIST_JOB_FIELDS = {"required_skills", "preferred_skills", "responsibilities", "custom_questions"}
+LIST_JOB_FIELDS = {"required_skills", "preferred_skills", "responsibilities", "custom_questions", "platforms"}
 COMPANY_OVERRIDE_FIELDS = {
     "company_overview", "company_culture", "benefits",
     "work_life_balance", "why_join_us",
@@ -66,7 +71,7 @@ COMPANY_OVERRIDE_FIELDS = {
 OPTIONAL_SKIPPABLE_FIELDS = {
     "job_category", "experience", "work_mode", "employment_type",
     "education", "deadline", "additional_information", "preferred_skills",
-    "required_skills", "responsibilities",
+    "required_skills", "responsibilities", "platforms",
 }
 
 
@@ -109,7 +114,7 @@ INTENTS_BLOCK_LIST_AND_OVERRIDE_CHANGES = {
 # allowing it is not itself a guarantee the AI can never touch it — see apply_updates for the
 # actual enforcement.
 class ListOperation(BaseModel):
-    field: Literal["required_skills", "preferred_skills", "responsibilities", "custom_questions"]
+    field: Literal["required_skills", "preferred_skills", "responsibilities", "custom_questions", "platforms"]
     operation: Literal["ADD", "REMOVE", "REPLACE"]
     values: list[str]
 
