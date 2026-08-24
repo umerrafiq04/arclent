@@ -49,7 +49,6 @@ const JOB_LIST_FIELDS = [
   ["responsibilities", "Responsibilities"],
   ["required_skills", "Required Skills"],
   ["preferred_skills", "Preferred Skills"],
-  ["platforms", "Platforms"],
 ];
 
 const JD_LIST_FIELDS = [
@@ -351,6 +350,7 @@ async function showDetail(id) {
     jobCard.appendChild(fieldRow("Required Skills", (job.required_skills || []).join(", ")));
     jobCard.appendChild(fieldRow("Preferred Skills", (job.preferred_skills || []).join(", ")));
     jobCard.appendChild(fieldRow("Responsibilities", (job.responsibilities || []).join(", ")));
+    jobCard.appendChild(fieldRow("Platforms", (job.platforms || []).join(", ")));
     detailBody.appendChild(jobCard);
 
     const datesCard = document.createElement("div");

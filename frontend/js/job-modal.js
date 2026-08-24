@@ -378,6 +378,12 @@
     }
   }
 
+  // Every field commit (patchField below) re-renders the whole draft form from scratch, which
+  // would otherwise re-collapse the Platforms checkbox dropdown after every single checkbox click
+  // — exactly wrong for a "select several" control. Tracked here, outside renderDraftForm, so it
+  // survives across those re-renders.
+  let platformsDropdownOpen = false;
+
   // Direct, silent job_state edit — no chat message, no processing status, no bot reply. This
   // is what every draft-form field commit calls instead of sendMessage.
   async function patchField(patch) {
@@ -672,6 +678,63 @@
     return wrap;
   }
 
+  // A closed-set multi-select — unlike listEditor above (free-text add/remove), every option is
+  // fixed and known in advance, so this renders as a checkbox list behind a dropdown summary
+  // rather than a typed-text add row. Any check/uncheck fires onChange with the FULL new selected
+  // array immediately (no separate confirm step) — the same job_state.platforms field the chat
+  // checklist writes to, so either path stays in sync and the bot picks up edits made here exactly
+  // like it does for every other field (see the trailing-draft-reminder mechanism on the backend).
+  // getOpen/setOpen persist the dropdown's open/closed state across the full-form re-render that
+  // every field commit triggers (see platformsDropdownOpen above) — without them, checking one box
+  // would collapse the dropdown before the next box could be checked.
+  function checkboxDropdown(labelText, options, selected, onChange, getOpen, setOpen) {
+    const wrap = document.createElement("div");
+    wrap.className = "jm-field";
+    const label = document.createElement("span");
+    label.className = "jm-field-label";
+    label.textContent = labelText;
+    wrap.appendChild(label);
+
+    const current = selected || [];
+    const details = document.createElement("details");
+    details.className = "jm-checkbox-dropdown";
+    if (getOpen) {
+      details.open = getOpen();
+    }
+    if (setOpen) {
+      details.addEventListener("toggle", () => setOpen(details.open));
+    }
+    const summary = document.createElement("summary");
+    summary.textContent = current.length > 0 ? current.join(", ") : `Select ${labelText.toLowerCase()}…`;
+    details.appendChild(summary);
+
+    const list = document.createElement("div");
+    list.className = "jm-checkbox-list";
+    options.forEach((option) => {
+      const optRow = document.createElement("label");
+      optRow.className = "jm-checkbox-option";
+      const checkbox = document.createElement("input");
+      checkbox.type = "checkbox";
+      checkbox.checked = current.includes(option);
+      checkbox.addEventListener("change", () => {
+        const now = new Set(current);
+        if (checkbox.checked) now.add(option);
+        else now.delete(option);
+        onChange(Array.from(now));
+      });
+      const optLabel = document.createElement("span");
+      optLabel.textContent = option;
+      optRow.appendChild(checkbox);
+      optRow.appendChild(optLabel);
+      list.appendChild(optRow);
+    });
+    details.appendChild(list);
+    wrap.appendChild(details);
+    return wrap;
+  }
+
+  const PLATFORM_OPTIONS = ["Facebook", "YouTube", "Instagram", "TikTok", "Vimeo", "Twitch", "Discord"];
+
   function renderDraftForm(data) {
     const jobState = data.job_state || {};
     const jdVersions = data.jd_versions;
@@ -796,6 +859,25 @@
     );
     draftForm.appendChild(grid3);
 
+    // Which platform(s) this role is hiring for — targeting/logistics like Location or Work Mode
+    // above, not job description content, so it lives here rather than inside "Full job
+    // description detail" and is never mentioned in the JD text itself. A closed set of exactly
+    // the 7 options the chat checklist offers, so this renders as a checkbox dropdown rather than
+    // a free-text list — settable both via the guided chat checklist (multi-select chips) and
+    // directly here; either path stays in sync since both write the same job_state.platforms list
+    // via a REPLACE, so the bot picks up edits made here exactly like it does for every other
+    // field.
+    draftForm.appendChild(
+      checkboxDropdown(
+        "Platforms",
+        PLATFORM_OPTIONS,
+        jobState.platforms,
+        (arr) => patchField({ list_operations: [{ field: "platforms", operation: "REPLACE", values: arr }] }),
+        () => platformsDropdownOpen,
+        (open) => (platformsDropdownOpen = open)
+      )
+    );
+
     if (hasJd) {
       // Every actual job-content field lives here, exactly once — the recruiter used to see
       // "Responsibilities" and "Major Accountabilities" as two separate, sometimes inconsistent
@@ -866,19 +948,6 @@
           (v) => patchField({ list_operations: [{ field: "preferred_skills", operation: "ADD", values: [v] }] }),
           (v) => patchField({ list_operations: [{ field: "preferred_skills", operation: "REMOVE", values: [v] }] }),
           (arr) => patchField({ list_operations: [{ field: "preferred_skills", operation: "REPLACE", values: arr }] })
-        )
-      );
-      // Which platform(s) this role is hiring for — a job_state field like the three above (so it
-      // uses list_operations, not jd_list_operations), settable both via the guided chat checklist
-      // (multi-select chips) and directly here; either path stays in sync since both write the same
-      // job_state.platforms list.
-      body.appendChild(
-        listEditor(
-          "Platforms",
-          jobState.platforms,
-          (v) => patchField({ list_operations: [{ field: "platforms", operation: "ADD", values: [v] }] }),
-          (v) => patchField({ list_operations: [{ field: "platforms", operation: "REMOVE", values: [v] }] }),
-          (arr) => patchField({ list_operations: [{ field: "platforms", operation: "REPLACE", values: arr }] })
         )
       );
 
@@ -1191,6 +1260,7 @@
 
   function closeModal() {
     closeQuestionsModal();
+    platformsDropdownOpen = false;
     overlay.classList.remove("open");
     document.body.style.overflow = "";
     closeTimer = setTimeout(() => {
@@ -1218,6 +1288,7 @@
     pendingFile = null;
     currentData = null;
     closeQuestionsModal();
+    platformsDropdownOpen = false;
     renderAttachmentChip();
     clearError();
     renderMessages([], [], false);
@@ -1230,6 +1301,7 @@
   async function openExisting(existingSessionId) {
     sessionId = existingSessionId;
     closeQuestionsModal();
+    platformsDropdownOpen = false;
     try {
       const data = await api.getChat(sessionId);
       currentData = data;

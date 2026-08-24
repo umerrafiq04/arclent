@@ -523,6 +523,15 @@ a {
   resize: vertical;
 }
 
+.profile-form textarea {
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none; /* legacy Edge/IE */
+}
+
+.profile-form textarea::-webkit-scrollbar {
+  display: none; /* Chrome/Safari/Edge — scroll still works, just no visible track */
+}
+
 .form-actions {
   display: flex;
   gap: 10px;

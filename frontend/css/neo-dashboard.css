@@ -1197,6 +1197,64 @@ body.neo .empty-state {
   resize: vertical;
 }
 
+.jm-field textarea {
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none; /* legacy Edge/IE */
+}
+
+.jm-field textarea::-webkit-scrollbar {
+  display: none; /* Chrome/Safari/Edge — scroll still works, just no visible track */
+}
+
+.jm-checkbox-dropdown {
+  border: 2px solid var(--neo-black, #14140f);
+  border-radius: 10px;
+  background: var(--neo-surface, #fff);
+}
+
+.jm-checkbox-dropdown summary {
+  cursor: pointer;
+  list-style: none;
+  padding: 9px 12px;
+  font-size: 14px;
+  color: var(--neo-black, #14140f);
+}
+
+.jm-checkbox-dropdown summary::-webkit-details-marker {
+  display: none;
+}
+
+.jm-checkbox-dropdown[open] summary {
+  border-bottom: 2px solid var(--neo-black, #14140f);
+}
+
+.jm-checkbox-list {
+  display: flex;
+  flex-direction: column;
+  padding: 6px;
+}
+
+.jm-checkbox-option {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 8px;
+  border-radius: 8px;
+  font-size: 13.5px;
+  cursor: pointer;
+}
+
+.jm-checkbox-option:hover {
+  background: var(--neo-yellow, #ffd23f);
+}
+
+.jm-checkbox-option input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--neo-black, #14140f);
+  cursor: pointer;
+}
+
 .jm-field-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;

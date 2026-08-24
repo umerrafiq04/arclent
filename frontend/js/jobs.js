@@ -30,7 +30,6 @@ const JOB_LIST_FIELDS = [
   ["responsibilities", "Responsibilities"],
   ["required_skills", "Required Skills"],
   ["preferred_skills", "Preferred Skills"],
-  ["platforms", "Platforms"],
 ];
 
 const JD_LIST_FIELDS = [
@@ -39,7 +38,9 @@ const JD_LIST_FIELDS = [
 ];
 
 // Stacked label/value fields shown right under the title, before the full description body —
-// only the ones the job actually has get rendered.
+// only the ones the job actually has get rendered. Platforms is targeting/logistics, not job
+// description content, so it lives here (never inside jdSections below) — the value is a list,
+// handled by the join in detailMetaGrid.
 const DETAIL_META_FIELDS = [
   ["company_name", "Company"],
   ["job_id", "Job Requisition ID"],
@@ -50,6 +51,7 @@ const DETAIL_META_FIELDS = [
   ["experience", "Experience"],
   ["education", "Education"],
   ["salary", "Salary"],
+  ["platforms", "Platforms"],
 ];
 
 function detailMetaGrid(job) {
@@ -57,7 +59,7 @@ function detailMetaGrid(job) {
   grid.className = "jd-meta-grid";
   DETAIL_META_FIELDS.forEach(([key, label]) => {
     const value = job[key];
-    if (!value) return;
+    if (!value || (Array.isArray(value) && value.length === 0)) return;
     const item = document.createElement("div");
     item.className = "jd-meta-item";
     const labelEl = document.createElement("div");
@@ -65,7 +67,7 @@ function detailMetaGrid(job) {
     labelEl.textContent = label;
     const valueEl = document.createElement("div");
     valueEl.className = "jd-meta-value";
-    valueEl.textContent = value;
+    valueEl.textContent = Array.isArray(value) ? value.join(", ") : value;
     item.appendChild(labelEl);
     item.appendChild(valueEl);
     grid.appendChild(item);
