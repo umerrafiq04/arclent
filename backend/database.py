@@ -571,8 +571,8 @@ def list_applications_for_job(job_id: str, db_path: str = APP_DB_PATH) -> list[d
 _JOB_LIST_COLUMNS = """
     jobs.id, jobs.job_id, jobs.session_id, jobs.company_id, jobs.job_title, jobs.job_category,
     jobs.experience, jobs.location, jobs.work_mode, jobs.employment_type, jobs.required_skills,
-    jobs.preferred_skills, jobs.status, jobs.accepting_applications, jobs.deadline, jobs.created_at,
-    jobs.updated_at, jobs.published_at,
+    jobs.preferred_skills, jobs.platforms, jobs.status, jobs.accepting_applications, jobs.deadline,
+    jobs.created_at, jobs.updated_at, jobs.published_at,
     company_profile.company_name AS company_name
 """
 

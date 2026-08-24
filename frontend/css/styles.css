@@ -654,6 +654,34 @@ a {
   font-size: 13px;
 }
 
+.platform-icons-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 4px 0;
+}
+
+.platform-icon-badge {
+  display: inline-flex;
+  line-height: 0;
+}
+
+.platform-icon-badge svg {
+  display: block;
+  border-radius: 6px;
+}
+
+.platform-icons-row-lg {
+  margin: 8px 0 10px;
+  gap: 8px;
+}
+
+.platform-icons-row-lg .platform-icon-badge svg {
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+}
+
 .job-card-posted {
   color: var(--color-text-muted);
   font-size: 12.5px;

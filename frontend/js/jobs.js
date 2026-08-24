@@ -38,9 +38,9 @@ const JD_LIST_FIELDS = [
 ];
 
 // Stacked label/value fields shown right under the title, before the full description body —
-// only the ones the job actually has get rendered. Platforms is targeting/logistics, not job
-// description content, so it lives here (never inside jdSections below) — the value is a list,
-// handled by the join in detailMetaGrid.
+// only the ones the job actually has get rendered. Platforms is shown separately, as logo
+// badges (see PLATFORM_ICONS/platformIconsRow below), never as a text row here and never inside
+// jdSections below — it's recruitment targeting, not job description content.
 const DETAIL_META_FIELDS = [
   ["company_name", "Company"],
   ["job_id", "Job Requisition ID"],
@@ -51,8 +51,47 @@ const DETAIL_META_FIELDS = [
   ["experience", "Experience"],
   ["education", "Education"],
   ["salary", "Salary"],
-  ["platforms", "Platforms"],
 ];
+
+// Small brand-colored logo badges for the platforms checklist field — shown instead of a text
+// list, on both the Available Jobs cards and the View Job detail page. Approximate marks (this
+// app has no official brand asset license), built as inline SVG so nothing depends on an external
+// icon CDN. Keyed by the exact strings the chat checklist / draft panel dropdown use.
+const PLATFORM_ICONS = {
+  Facebook:
+    '<svg viewBox="0 0 24 24" width="18" height="18"><circle cx="12" cy="12" r="12" fill="#1877F2"/><path d="M13.5 21v-7.2h2.4l.36-2.8h-2.76v-1.8c0-.81.22-1.36 1.39-1.36h1.48V5.34C15.9 5.24 15.02 5.16 14 5.16c-2.28 0-3.84 1.39-3.84 3.94v2.06H7.8v2.8h2.36V21h3.34z" fill="#fff"/></svg>',
+  YouTube:
+    '<svg viewBox="0 0 24 24" width="18" height="18"><rect width="24" height="24" rx="6" fill="#FF0000"/><path d="M10 8.3l6.2 3.7-6.2 3.7V8.3z" fill="#fff"/></svg>',
+  Instagram:
+    '<svg viewBox="0 0 24 24" width="18" height="18"><defs><linearGradient id="igGrad" x1="0" y1="1" x2="1" y2="0"><stop offset="0%" stop-color="#feda75"/><stop offset="35%" stop-color="#d62976"/><stop offset="70%" stop-color="#962fbf"/><stop offset="100%" stop-color="#4f5bd5"/></linearGradient></defs><rect width="24" height="24" rx="6" fill="url(#igGrad)"/><rect x="6" y="6" width="12" height="12" rx="3.5" fill="none" stroke="#fff" stroke-width="1.6"/><circle cx="12" cy="12" r="3.1" fill="none" stroke="#fff" stroke-width="1.6"/><circle cx="16.3" cy="7.7" r="1" fill="#fff"/></svg>',
+  TikTok:
+    '<svg viewBox="0 0 24 24" width="18" height="18"><rect width="24" height="24" rx="6" fill="#000"/><path d="M15.8 6.3c.3 1.6 1.3 2.6 3 2.8v2.1c-1.1 0-2.1-.3-3-1v4.5a4.1 4.1 0 1 1-4.1-4.1c.2 0 .4 0 .6.1v2.2a2 2 0 1 0 1.5 1.9V6.3h2z" fill="#25F4EE" transform="translate(0.5,-0.4)"/><path d="M15.8 6.3c.3 1.6 1.3 2.6 3 2.8v2.1c-1.1 0-2.1-.3-3-1v4.5a4.1 4.1 0 1 1-4.1-4.1c.2 0 .4 0 .6.1v2.2a2 2 0 1 0 1.5 1.9V6.3h2z" fill="#FE2C55" transform="translate(-0.5,0.4)"/><path d="M15.8 6.3c.3 1.6 1.3 2.6 3 2.8v2.1c-1.1 0-2.1-.3-3-1v4.5a4.1 4.1 0 1 1-4.1-4.1c.2 0 .4 0 .6.1v2.2a2 2 0 1 0 1.5 1.9V6.3h2z" fill="#fff"/></svg>',
+  Vimeo:
+    '<svg viewBox="0 0 24 24" width="18" height="18"><rect width="24" height="24" rx="6" fill="#1AB7EA"/><path d="M19 8.6c-.1 1.9-1.4 4.6-4 8-2.7 3.6-5 5.4-6.8 5.4-1.1 0-2.1-1-2.9-3.1L4 13.4c-.5-1.7-1-1.7-1.9-1.2l-.6.4-.5-.7 2.7-2.4C4.8 8.6 5.7 7.9 6.4 7.9c1.5-.1 2.4.9 2.8 3.1.5 2.4.8 3.9 1 4.5.5 1.5 1.1 2.2 1.7 2.2.5 0 1.2-.6 2.1-1.9.9-1.3 1.4-2.2 1.5-2.9.1-1.1-.4-1.6-1.5-1.6-.5 0-1.1.1-1.6.3 1.1-3.5 3.2-5.2 6.2-5.1 2.3.1 3.3 1.5 3.2 4.1z" fill="#fff"/></svg>',
+  Twitch:
+    '<svg viewBox="0 0 24 24" width="18" height="18"><rect width="24" height="24" rx="6" fill="#9146FF"/><path d="M7 5.5L5.5 9v9h3.2V20l2-1.5h2.4L17 15V5.5H7zm8.5 8.6l-1.9 1.9h-2.4l-1.7 1.7v-1.7H7.1V6.6h8.4v7.5z" fill="#fff"/><rect x="10.3" y="8.5" width="1.2" height="3.2" fill="#9146FF"/><rect x="13.3" y="8.5" width="1.2" height="3.2" fill="#9146FF"/></svg>',
+  Discord:
+    '<svg viewBox="0 0 24 24" width="18" height="18"><rect width="24" height="24" rx="6" fill="#5865F2"/><ellipse cx="9" cy="13" rx="1.5" ry="1.8" fill="#fff"/><ellipse cx="15" cy="13" rx="1.5" ry="1.8" fill="#fff"/><path d="M7 8.5c1.5-.8 3.2-1.2 5-1.2s3.5.4 5 1.2" stroke="#fff" stroke-width="1.2" fill="none" stroke-linecap="round"/></svg>',
+};
+
+// Renders the small logo-badge row for a job's platforms — returns null (append-safe as a no-op)
+// when the job has none, so every call site can unconditionally appendChild without an extra
+// guard. Each badge carries a title tooltip with the platform name for accessibility/clarity.
+function platformIconsRow(platforms) {
+  if (!platforms || platforms.length === 0) return null;
+  const row = document.createElement("div");
+  row.className = "platform-icons-row";
+  platforms.forEach((name) => {
+    const svgMarkup = PLATFORM_ICONS[name];
+    if (!svgMarkup) return;
+    const badge = document.createElement("span");
+    badge.className = "platform-icon-badge";
+    badge.title = name;
+    badge.innerHTML = svgMarkup;
+    row.appendChild(badge);
+  });
+  return row;
+}
 
 function detailMetaGrid(job) {
   const grid = document.createElement("div");
@@ -97,6 +136,8 @@ function jobCard(job) {
   idLine.textContent = job.job_id;
   left.appendChild(title);
   left.appendChild(meta);
+  const platformIcons = platformIconsRow(job.platforms);
+  if (platformIcons) left.appendChild(platformIcons);
   left.appendChild(idLine);
 
   if (!job.accepting_applications) {
@@ -222,6 +263,12 @@ async function showDetail(jobId) {
     title.style.marginBottom = "6px";
     title.textContent = job.job_title;
     card.appendChild(title);
+
+    const platformIcons = platformIconsRow(job.platforms);
+    if (platformIcons) {
+      platformIcons.classList.add("platform-icons-row-lg");
+      card.appendChild(platformIcons);
+    }
 
     if (job.published_at) {
       const postedLine = document.createElement("div");
