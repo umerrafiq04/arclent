@@ -77,6 +77,11 @@ const PLATFORM_ICONS = {
 // Renders the small logo-badge row for a job's platforms — returns null (append-safe as a no-op)
 // when the job has none, so every call site can unconditionally appendChild without an extra
 // guard. Each badge carries a title tooltip with the platform name for accessibility/clarity.
+// The Instagram mark's gradient has a fixed "igGrad" id in PLATFORM_ICONS — SVG ids must be
+// unique document-wide, so with several Instagram badges on one page (multiple job cards, or a
+// list card plus the detail page) later ones silently fail to resolve the gradient and render
+// invisible. Give every badge instance its own id via a simple counter before injecting it.
+let _platformIconInstanceCounter = 0;
 function platformIconsRow(platforms) {
   if (!platforms || platforms.length === 0) return null;
   const row = document.createElement("div");
@@ -84,10 +89,11 @@ function platformIconsRow(platforms) {
   platforms.forEach((name) => {
     const svgMarkup = PLATFORM_ICONS[name];
     if (!svgMarkup) return;
+    const uniqueId = `igGrad${_platformIconInstanceCounter++}`;
     const badge = document.createElement("span");
     badge.className = "platform-icon-badge";
     badge.title = name;
-    badge.innerHTML = svgMarkup;
+    badge.innerHTML = svgMarkup.replaceAll("igGrad", uniqueId);
     row.appendChild(badge);
   });
   return row;
