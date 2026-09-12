@@ -389,9 +389,18 @@
     appendTypeHint(chipRow || row);
   }
 
+  // Real dollar figures, not just "Competitive, negotiable" — a recruiter wants an actual
+  // suggested range to tap, not just a way to avoid answering.
+  const SALARY_CHIPS = [
+    "$40,000 - $60,000/year",
+    "$60,000 - $80,000/year",
+    "$80,000 - $100,000/year",
+    "Competitive, negotiable",
+  ];
+
   function renderLocalSalaryQuestion() {
     const row = appendMessage("ai", salaryQuestionText(localIntake.location));
-    const chipRow = appendChips(row, ["Competitive, negotiable"], false, handleLocalAnswer);
+    const chipRow = appendChips(row, SALARY_CHIPS, false, handleLocalAnswer);
     appendTypeHint(chipRow || row);
   }
 
