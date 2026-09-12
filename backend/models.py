@@ -1,7 +1,34 @@
 from enum import Enum
-from typing import Literal
+from typing import Annotated, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, BeforeValidator, Field
+
+
+def _none_as_empty_list(v):
+    return v if v is not None else []
+
+
+def _none_as_empty_dict(v):
+    return v if v is not None else {}
+
+
+# Every structured-output list field the chat/generation LLM populates is typed with one of these
+# instead of a bare `list[T]` — verified live against Groq's openai/gpt-oss-120b: when a turn
+# genuinely has nothing for a list field (e.g. no suggested_options because the reply isn't a
+# question), the model sometimes emits `null` instead of `[]`. A bare `list[T]` schema has no
+# `null` variant, so Groq's OWN server-side tool-call validation rejects the whole structured-
+# output call outright (a 400, not a parse error langchain could recover from) — and since the
+# model does this consistently for a given turn shape, every retry fails the identical way,
+# exhausting call_structured's retry budget and falling through to the exception fallback.
+# Annotated + a BeforeValidator makes the exported JSON schema explicitly nullable
+# (`anyOf: [array, null]`, so Groq accepts `null`) while still normalizing it straight to `[]` at
+# parse time — every existing call site keeps getting a real list, never None.
+NullableStrList = Annotated[list[str] | None, BeforeValidator(_none_as_empty_list)]
+
+# Same reasoning as NullableStrList, for dict-typed structured-output fields (field_updates,
+# company_overrides) — confirmed live against Groq: it emits `null` for these too when a turn has
+# nothing to put there, and a bare `dict[str, str]` schema has no `null` variant either.
+NullableStrDict = Annotated[dict[str, str] | None, BeforeValidator(_none_as_empty_dict)]
 
 
 class CompanyProfile(BaseModel):
@@ -121,6 +148,10 @@ class ListOperation(BaseModel):
     values: list[str]
 
 
+# See NullableStrList above — same reasoning, for TurnAnalysis.list_operations specifically.
+NullableListOperationList = Annotated[list[ListOperation] | None, BeforeValidator(_none_as_empty_list)]
+
+
 # The generated job description's OWN list fields (distinct from JobState's — see ListOperation
 # above) — what the draft panel's "Full job description detail" editor uses to add/remove items
 # directly on the drafted document, the same way ListOperation lets the recruiter edit
@@ -144,14 +175,14 @@ class TurnAnalysis(BaseModel):
     natural-language reply into one call — never split into separate calls.
     """
     intent: Intent
-    field_updates: dict[str, str] = Field(default_factory=dict)
-    list_operations: list[ListOperation] = Field(default_factory=list)
-    company_overrides: dict[str, str] = Field(default_factory=dict)
+    field_updates: NullableStrDict = Field(default_factory=dict)
+    list_operations: NullableListOperationList = Field(default_factory=list)
+    company_overrides: NullableStrDict = Field(default_factory=dict)
     enough_information: bool
-    missing_essential: list[str] = Field(default_factory=list)
+    missing_essential: NullableStrList = Field(default_factory=list)
     selected_version: Literal["1", "2"] | None = None
     asking_about_field: str | None = None
-    suggested_options: list[str] = Field(default_factory=list)
+    suggested_options: NullableStrList = Field(default_factory=list)
     # True when suggested_options are choices the recruiter can combine (e.g. picking several
     # skills: Python + SQL + React), false when only one answer makes sense (e.g. work mode,
     # experience band, yes/no). Governs whether the UI lets the recruiter tap multiple chips
@@ -186,11 +217,11 @@ class JobDescriptionDraft(BaseModel):
     company_overview: str | None = None
     job_summary: str | None = None
     about_role: str | None = None
-    required_skills: list[str] = Field(default_factory=list)
-    preferred_skills: list[str] = Field(default_factory=list)
-    responsibilities: list[str] = Field(default_factory=list)
-    stand_out: list[str] = Field(default_factory=list)
-    benefits: list[str] = Field(default_factory=list)
+    required_skills: NullableStrList = Field(default_factory=list)
+    preferred_skills: NullableStrList = Field(default_factory=list)
+    responsibilities: NullableStrList = Field(default_factory=list)
+    stand_out: NullableStrList = Field(default_factory=list)
+    benefits: NullableStrList = Field(default_factory=list)
     why_company: str | None = None
 
 
