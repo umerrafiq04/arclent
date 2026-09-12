@@ -912,11 +912,14 @@ def _find_fresher_experience_contradiction(text: str) -> tuple[str, str] | None:
 # role, so guessing one would risk actively misleading a candidate rather than just being generic.
 # It simply stays unset unless the recruiter volunteers it (still captured via normal field_updates
 # extraction or the fact-backstop below if they do) — the JD generation prompt already omits any
-# meta line it doesn't have real data for rather than inventing one.
+# meta line it doesn't have real data for rather than inventing one. platforms is likewise no
+# longer a checklist item — once the guided intake collapsed to a single-API-call local flow, it
+# went back to being a purely optional field (see sufficiency.py), set only via the draft panel's
+# checkbox dropdown or if the recruiter mentions it unprompted in chat (_extract_platforms_backstop
+# still handles that case; the option list/multi-select machinery below is left in place for it).
 _CHECKLIST_ORDER = [
     "required_skills",
     "responsibilities",
-    "platforms",
     "location",
     "salary",
 ]
@@ -1012,6 +1015,193 @@ def _currency_symbol_for_location(location: str | None) -> str | None:
         if pattern.search(location):
             return symbol
     return None
+
+
+# Job-title -> required/preferred skills + responsibilities, keyed by keyword pattern, first match
+# wins. Used by the single-call job intake endpoint (routes/chat.py POST /chat/intake) to populate
+# job_state BEFORE the one-and-only generate_jd call, replacing what used to be an LLM invention
+# step (see the old SKILLS AND RESPONSIBILITIES ARE GENERATED... prompt instruction, still used by
+# the chat-based analyze_turn path for jobs NOT created via /intake). generate_jd's PROOFREAD
+# MIRROR guard (_apply_proofread_corrections above) only ever polishes wording or leaves these
+# untouched — it never re-invents them — so pre-populating here is sufficient, no second LLM call
+# needed. Ordering matters where keywords could otherwise collide (e.g. "YouTube Channel Manager"
+# must be checked before the generic "social media" pattern below it).
+_JOB_TITLE_SKILL_PROFILES: list[tuple[re.Pattern, dict]] = [
+    (re.compile(r"youtube\b.*\bmanager|\bchannel manager", re.I), {
+        "job_category": "Content & Social Media",
+        "required_skills": ["YouTube Studio", "SEO & Keyword Research", "Content Scheduling", "Analytics"],
+        "preferred_skills": ["Thumbnail Design Basics", "Community Management"],
+        "responsibilities": ["Manage upload scheduling and channel organization",
+                              "Optimize titles, tags, and descriptions for discoverability",
+                              "Track analytics and report on channel growth"],
+    }),
+    (re.compile(r"\bvideo editor\b", re.I), {
+        "job_category": "Video Production",
+        "required_skills": ["Adobe Premiere Pro", "Adobe After Effects", "Color Grading"],
+        "preferred_skills": ["Motion Graphics", "Sound Design"],
+        "responsibilities": ["Edit raw footage into polished videos",
+                              "Sync audio to visuals and apply color grading",
+                              "Organize and manage media assets"],
+    }),
+    (re.compile(r"\bthumbnail designer\b", re.I), {
+        "job_category": "Graphic Design",
+        "required_skills": ["Adobe Photoshop", "Composition & Typography", "Click-Through Optimization"],
+        "preferred_skills": ["Illustrator", "A/B Testing Thumbnails"],
+        "responsibilities": ["Design eye-catching, on-brand thumbnails for new uploads",
+                              "Iterate on designs based on click-through performance",
+                              "Maintain a consistent visual identity across a channel"],
+    }),
+    (re.compile(r"\bvideo produc", re.I), {
+        "job_category": "Video Production",
+        "required_skills": ["Pre-Production Planning", "On-Set Direction", "Adobe Premiere Pro"],
+        "preferred_skills": ["Lighting & Audio Setup", "Budget Management"],
+        "responsibilities": ["Plan and oversee video shoots from concept to delivery",
+                              "Coordinate talent, crew, and equipment",
+                              "Ensure final output meets creative and brand standards"],
+    }),
+    (re.compile(r"\bmotion graphics\b", re.I), {
+        "job_category": "Video Production",
+        "required_skills": ["Adobe After Effects", "Cinema 4D", "Animation Principles"],
+        "preferred_skills": ["Illustrator", "3D Motion Design"],
+        "responsibilities": ["Design and animate motion graphics for video content",
+                              "Create title sequences, lower thirds, and visual effects",
+                              "Collaborate with editors to integrate graphics seamlessly"],
+    }),
+    (re.compile(r"\bpodcast editor\b", re.I), {
+        "job_category": "Audio Production",
+        "required_skills": ["Audio Editing (Audition/Audacity)", "Noise Reduction", "Audio Mixing"],
+        "preferred_skills": ["Show Notes Writing", "Video Podcast Editing"],
+        "responsibilities": ["Edit raw audio into a polished, publish-ready episode",
+                              "Clean up audio quality and balance levels",
+                              "Prepare and export episodes for distribution"],
+    }),
+    (re.compile(r"\bsocial media\b", re.I), {
+        "job_category": "Content & Social Media",
+        "required_skills": ["Content Calendar Planning", "Platform Analytics", "Copywriting"],
+        "preferred_skills": ["Paid Social Ads", "Community Management"],
+        "responsibilities": ["Plan and schedule content across social platforms",
+                              "Engage with the audience and grow followers",
+                              "Track performance metrics and adjust strategy"],
+    }),
+    (re.compile(r"\bgraphic designer\b", re.I), {
+        "job_category": "Graphic Design",
+        "required_skills": ["Adobe Photoshop", "Adobe Illustrator", "Typography & Layout"],
+        "preferred_skills": ["Figma", "Motion Graphics Basics"],
+        "responsibilities": ["Design graphics for digital and/or print use",
+                              "Maintain brand consistency across visual assets",
+                              "Iterate on designs based on feedback"],
+    }),
+    (re.compile(r"\bcontent writ(er|ing)\b", re.I), {
+        "job_category": "Content & Social Media",
+        "required_skills": ["Copywriting", "SEO Writing", "Editing & Proofreading"],
+        "preferred_skills": ["Content Strategy", "CMS Experience"],
+        "responsibilities": ["Write clear, engaging content for the intended audience",
+                              "Research topics and ensure factual accuracy",
+                              "Edit and proofread content before publishing"],
+    }),
+    (re.compile(r"\bcontent editor\b", re.I), {
+        "job_category": "Content & Social Media",
+        "required_skills": ["Editing & Proofreading", "Style Guide Adherence", "SEO Basics"],
+        "preferred_skills": ["CMS Experience", "Content Strategy"],
+        "responsibilities": ["Review and edit content for clarity, tone, and accuracy",
+                              "Ensure content follows brand and style guidelines",
+                              "Coordinate with writers/creators on revisions"],
+    }),
+    (re.compile(r"\bcontent strategist\b", re.I), {
+        "job_category": "Content & Social Media",
+        "required_skills": ["Content Planning", "Audience Research", "Analytics"],
+        "preferred_skills": ["SEO Strategy", "Cross-Platform Distribution"],
+        "responsibilities": ["Develop content strategy aligned with audience/brand goals",
+                              "Plan content calendars across channels",
+                              "Analyze performance and refine the strategy over time"],
+    }),
+    (re.compile(r"\bugc\b|user.generated content", re.I), {
+        "job_category": "Content & Social Media",
+        "required_skills": ["On-Camera Presence", "Basic Video Editing", "Brand Storytelling"],
+        "preferred_skills": ["Script Writing", "Social Media Trends Awareness"],
+        "responsibilities": ["Create authentic, brand-aligned content for social/ads",
+                              "Film and lightly edit short-form video content",
+                              "Incorporate feedback and brand guidelines into content"],
+    }),
+    (re.compile(r"script ?writer", re.I), {
+        "job_category": "Content & Social Media",
+        "required_skills": ["Scriptwriting", "Storytelling & Pacing", "Research"],
+        "preferred_skills": ["SEO for Video", "Tone/Voice Adaptation"],
+        "responsibilities": ["Write scripts tailored to the format and audience",
+                              "Research topics to ensure accuracy and depth",
+                              "Revise scripts based on feedback"],
+    }),
+    (re.compile(r"\.net\b|asp\.net\b", re.I), {
+        "job_category": "Software Engineering",
+        "required_skills": ["C#", ".NET", "ASP.NET", "REST APIs", "SQL"],
+        "preferred_skills": ["Azure", "Entity Framework"],
+        "responsibilities": ["Build and maintain backend services and APIs",
+                              "Write clean, testable, maintainable code",
+                              "Collaborate with cross-functional teams on feature delivery"],
+    }),
+    (re.compile(r"\breact\b", re.I), {
+        "job_category": "Software Engineering",
+        "required_skills": ["React", "JavaScript", "TypeScript", "HTML", "CSS"],
+        "preferred_skills": ["Next.js", "Redux"],
+        "responsibilities": ["Build and maintain responsive web UI components",
+                              "Collaborate with designers and backend engineers",
+                              "Write clean, reusable, well-tested frontend code"],
+    }),
+    (re.compile(r"machine learning|\bml engineer\b", re.I), {
+        "job_category": "Data & Machine Learning",
+        "required_skills": ["Python", "Machine Learning", "SQL", "Pandas", "Scikit-learn"],
+        "preferred_skills": ["TensorFlow/PyTorch", "MLOps"],
+        "responsibilities": ["Build, train, and evaluate machine learning models",
+                              "Prepare and analyze datasets",
+                              "Deploy and monitor models in production"],
+    }),
+    (re.compile(r"gen ?ai|\bllm\b", re.I), {
+        "job_category": "Data & Machine Learning",
+        "required_skills": ["Python", "LLM", "RAG", "GenAI", "FastAPI"],
+        "preferred_skills": ["LangChain/LangGraph", "Vector Databases"],
+        "responsibilities": ["Design and build LLM-powered application features",
+                              "Implement and tune retrieval-augmented generation pipelines",
+                              "Evaluate and improve model output quality"],
+    }),
+    (re.compile(r"\bdata analyst\b", re.I), {
+        "job_category": "Data & Machine Learning",
+        "required_skills": ["SQL", "Python", "Excel", "Power BI", "Data Visualization"],
+        "preferred_skills": ["Statistics", "A/B Testing"],
+        "responsibilities": ["Analyze data to surface actionable insights",
+                              "Build dashboards and reports for stakeholders",
+                              "Maintain data quality and documentation"],
+    }),
+    (re.compile(r"\bdevops\b", re.I), {
+        "job_category": "Software Engineering",
+        "required_skills": ["AWS", "Docker", "Kubernetes", "CI/CD", "Linux"],
+        "preferred_skills": ["Terraform", "Monitoring & Observability"],
+        "responsibilities": ["Build and maintain CI/CD pipelines",
+                              "Manage cloud infrastructure and deployments",
+                              "Monitor system health and troubleshoot incidents"],
+    }),
+]
+
+
+def _generic_skill_profile(job_title: str) -> dict:
+    """Fallback for any job title that doesn't match a known keyword pattern above — never leaves
+    required_skills/responsibilities empty (that would fail the hard floor), but keeps the content
+    genuinely generic rather than guessing at specifics for a role this table doesn't recognize.
+    """
+    return {
+        "job_category": None,
+        "required_skills": ["Communication", "Problem-Solving", "Time Management"],
+        "preferred_skills": ["Relevant Industry Experience"],
+        "responsibilities": [f"Execute day-to-day responsibilities for the {job_title} role",
+                              "Collaborate with cross-functional team members",
+                              "Report progress and results to stakeholders"],
+    }
+
+
+def _skill_profile_for_job_title(job_title: str | None) -> dict:
+    for pattern, profile in _JOB_TITLE_SKILL_PROFILES:
+        if pattern.search(job_title or ""):
+            return profile
+    return _generic_skill_profile(job_title or "this role")
 
 
 def _salary_question(job_state: dict) -> str:

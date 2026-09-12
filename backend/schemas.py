@@ -8,6 +8,18 @@ class ChatRequest(BaseModel):
     message: str
 
 
+class JobIntakeRequest(BaseModel):
+    """The single combined payload for the local, deterministic "Post a Job" pre-flow (see
+    POST /api/chat/intake) — job title, location, and salary are collected via local chips/typed
+    text with zero LLM involvement, then submitted here all at once. Always mints a brand-new
+    session (no session_id field) so this can never be pointed at an existing draft.
+    """
+    job_title: str
+    location: str
+    salary: str
+    additional_information: str | None = None
+
+
 class ChatMessage(BaseModel):
     role: str  # "user" | "assistant"
     content: str

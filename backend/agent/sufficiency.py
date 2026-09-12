@@ -4,9 +4,10 @@ Hard floor (always required, checked in code):
   - job_title, location, and salary are all set (mandatory per an explicit founder decision —
     these three can never be skipped, unlike every other checklist field)
   - at least one of required_skills / responsibilities is non-empty
-  - platforms is non-empty (mandatory too, same tier as location/salary — an explicit founder
-    correction: it was originally skippable, but the flow only asks a small handful of proactive
-    questions at all, so there's no reason for any of them to have a Skip affordance)
+
+Platforms is NOT part of the hard floor — it's optional, never proactively asked, and settable
+only via the draft panel's checkbox dropdown after generation (reversed from an earlier
+mandatory-platforms decision once the guided intake was collapsed to a single-API-call flow).
 
 Soft essentials (experience / work_mode "if relevant" to the role) are context-dependent, so
 `analyze_turn`'s prompt asks the model to flag them in `missing_essential` only when they
@@ -16,21 +17,18 @@ hard floor holds AND the model isn't currently flagging any soft-essential as mi
 
 HARD_REQUIRED_SCALAR = ("job_title", "location", "salary")
 HARD_REQUIRED_ANY_OF_LISTS = ("required_skills", "responsibilities")
-HARD_REQUIRED_LIST = ("platforms",)
 
 
 def hard_floor_met(job_state: dict) -> bool:
     has_title = all(bool(job_state.get(f)) for f in HARD_REQUIRED_SCALAR)
     has_requirements = any(bool(job_state.get(f)) for f in HARD_REQUIRED_ANY_OF_LISTS)
-    has_platforms = all(bool(job_state.get(f)) for f in HARD_REQUIRED_LIST)
-    return has_title and has_requirements and has_platforms
+    return has_title and has_requirements
 
 
 def hard_floor_missing(job_state: dict) -> list[str]:
     missing = [f for f in HARD_REQUIRED_SCALAR if not job_state.get(f)]
     if not any(job_state.get(f) for f in HARD_REQUIRED_ANY_OF_LISTS):
         missing.append("required_skills_or_responsibilities")
-    missing.extend(f for f in HARD_REQUIRED_LIST if not job_state.get(f))
     return missing
 
 

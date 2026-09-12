@@ -53,8 +53,12 @@
   // title). Multi-select: tapping toggles the chip on/off, nothing sends until "Add Selected" —
   // for questions like "any other required skills?" where picking several at once (Python + SQL
   // + React) is the whole point. The bot decides which mode via options_multi_select per turn.
-  function appendChips(afterRow, options, multiSelect) {
+  // onSelect is optional — defaults to the real backend-driven sendMessage, but the local intake
+  // pre-flow (job title/location/salary/additional-details, see handleLocalAnswer below) passes
+  // its own local-only handler instead, since those steps must never hit the backend per-question.
+  function appendChips(afterRow, options, multiSelect, onSelect) {
     if (!options || options.length === 0) return;
+    const handleSelect = onSelect || sendMessage;
     const row = document.createElement("div");
     row.className = "jm-chip-row";
 
@@ -66,7 +70,7 @@
         chip.textContent = opt;
         chip.addEventListener("click", () => {
           row.querySelectorAll(".jm-chip").forEach((c) => (c.disabled = true));
-          sendMessage(opt);
+          handleSelect(opt);
         });
         row.appendChild(chip);
       });
@@ -79,7 +83,7 @@
       confirmBtn.disabled = true;
       confirmBtn.addEventListener("click", () => {
         row.querySelectorAll(".jm-chip, .jm-chip-confirm").forEach((c) => (c.disabled = true));
-        sendMessage(Array.from(selected).join(", "));
+        handleSelect(Array.from(selected).join(", "));
       });
 
       options.forEach((opt) => {
@@ -324,6 +328,138 @@
     return pool.slice(0, count);
   }
 
+  // Local, fully client-side "Post a Job" pre-flow — job title -> location -> salary ->
+  // additional details, answered via chips or typed text with ZERO backend/LLM calls per
+  // question (mirrors the equivalent hardcoded tables in backend/agent/nodes.py so the visible
+  // UX matches what the old chat-driven checklist used to show). Once all four are collected,
+  // submitIntake() below makes the ONE combined API call that creates the job and generates its
+  // description. localFlowStep is null whenever a real backend-driven conversation is in
+  // progress (an existing/reopened draft) so handleLocalAnswer is never mistakenly invoked then.
+  let localFlowStep = null; // "title" | "location" | "salary" | "additional" | null
+  let localIntake = { jobTitle: null, location: null, salary: null, additionalInformation: null };
+
+  // Mirrors backend/agent/nodes.py's _LOCATION_CHIP_POOL — keep both in sync if either changes.
+  const LOCATION_CHIP_POOL = [
+    "Bangalore", "Mumbai", "Delhi NCR", "Hyderabad", "Pune", "Chennai", "Kolkata", "Srinagar",
+    "New York", "Los Angeles", "London", "Toronto", "Sydney", "Singapore", "Dubai", "Berlin",
+  ];
+
+  function pickLocationChips() {
+    const pool = LOCATION_CHIP_POOL.slice();
+    for (let i = pool.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [pool[i], pool[j]] = [pool[j], pool[i]];
+    }
+    return ["Worldwide", ...pool.slice(0, 3)];
+  }
+
+  // Mirrors backend/agent/nodes.py's _CURRENCY_BY_LOCATION_KEYWORDS — keep both in sync.
+  const CURRENCY_BY_LOCATION_KEYWORDS = [
+    [/\b(bangalore|bengaluru|mumbai|delhi|hyderabad|pune|chennai|kolkata|srinagar|ahmedabad|jaipur|noida|gurgaon|gurugram|india)\b/i, "₹"],
+    [/\b(london|manchester|birmingham|edinburgh|glasgow|u\.?k\.?|united kingdom)\b/i, "£"],
+    [/\b(toronto|vancouver|montreal|canada)\b/i, "C$"],
+    [/\b(sydney|melbourne|brisbane|australia)\b/i, "A$"],
+    [/\b(singapore)\b/i, "S$"],
+    [/\b(dubai|abu dhabi|u\.?a\.?e\.?)\b/i, "AED"],
+    [/\b(berlin|munich|frankfurt|paris|madrid|amsterdam|germany|france|spain|netherlands)\b/i, "€"],
+    [/\b(new york|los angeles|san francisco|chicago|austin|seattle|boston|u\.?s\.?a?\.?|united states)\b/i, "$"],
+  ];
+
+  function currencySymbolForLocation(location) {
+    if (!location) return null;
+    for (const [pattern, symbol] of CURRENCY_BY_LOCATION_KEYWORDS) {
+      if (pattern.test(location)) return symbol;
+    }
+    return null;
+  }
+
+  // Mirrors backend/agent/nodes.py's _salary_question.
+  function salaryQuestionText(location) {
+    const base = "What's the salary range for this role, if you'd like to share one?";
+    const symbol = currencySymbolForLocation(location);
+    return symbol ? `${base} (in ${symbol}, based on the location you gave)` : base;
+  }
+
+  function renderLocalLocationQuestion() {
+    const row = appendMessage(
+      "ai",
+      'Which city or region will this role be based in? You can also say "Worldwide" if it\'s fully remote.'
+    );
+    const chipRow = appendChips(row, pickLocationChips(), false, handleLocalAnswer);
+    appendTypeHint(chipRow || row);
+  }
+
+  function renderLocalSalaryQuestion() {
+    const row = appendMessage("ai", salaryQuestionText(localIntake.location));
+    const chipRow = appendChips(row, ["Competitive, negotiable"], false, handleLocalAnswer);
+    appendTypeHint(chipRow || row);
+  }
+
+  function renderLocalAdditionalQuestion() {
+    const row = appendMessage(
+      "ai",
+      "Anything else you'd like to add? (optional — company culture, specific requirements, etc.)"
+    );
+    const chipRow = appendChips(row, ["Skip"], false, handleLocalAnswer);
+    appendTypeHint(chipRow || row);
+  }
+
+  // Dispatches one answer in the local pre-flow to the next step, entirely client-side. A pending
+  // file attachment always falls back to the real backend chat (document upload isn't part of
+  // this local flow) — unchanged behavior from before this pre-flow existed.
+  function handleLocalAnswer(text) {
+    text = (text || "").trim();
+    if (pendingFile) {
+      sendMessage(text);
+      return;
+    }
+    clearError();
+    appendMessage("user", text || "Skip");
+    chatInput.value = "";
+
+    if (localFlowStep === "title") {
+      localIntake.jobTitle = text;
+      localFlowStep = "location";
+      renderLocalLocationQuestion();
+    } else if (localFlowStep === "location") {
+      localIntake.location = text;
+      localFlowStep = "salary";
+      renderLocalSalaryQuestion();
+    } else if (localFlowStep === "salary") {
+      localIntake.salary = text;
+      localFlowStep = "additional";
+      renderLocalAdditionalQuestion();
+    } else if (localFlowStep === "additional") {
+      localIntake.additionalInformation = text || null;
+      localFlowStep = null;
+      submitIntake();
+    }
+  }
+
+  // The one and only backend call for the whole local pre-flow — creates the job and generates
+  // its description in a single request. Mirrors the existing generateNow pattern (plain
+  // non-streamed request with processing-status feedback).
+  async function submitIntake() {
+    sendBtn.disabled = true;
+    showProcessingStatus("Creating your job description...");
+    try {
+      const data = await api.postJobIntake({
+        job_title: localIntake.jobTitle,
+        location: localIntake.location,
+        salary: localIntake.salary,
+        additional_information: localIntake.additionalInformation,
+      });
+      hideProcessingStatus();
+      applyChatResponse(data);
+    } catch (err) {
+      hideProcessingStatus();
+      showError(err.message || "Couldn't create the job description. Please try again.");
+      localFlowStep = "additional"; // let them retry from the last step
+    } finally {
+      sendBtn.disabled = false;
+    }
+  }
+
   function renderMessages(messages, suggestedOptions, multiSelect, askingAboutField) {
     clearChildren(messageList);
     if (!messages || messages.length === 0) {
@@ -336,7 +472,7 @@
         ? `Hi ${window.recruiterFirstName}, what are you hiring for today? 👋`
         : "What are you hiring for today? 👋";
       const row = appendMessage("ai", greeting);
-      const chipRow = appendChips(row, pickRoleChips(4), false);
+      const chipRow = appendChips(row, pickRoleChips(4), false, handleLocalAnswer);
       appendTypeHint(chipRow || row);
       return;
     }
@@ -1184,6 +1320,24 @@
     progressEl.textContent = data.job_state && data.job_state.job_title ? data.job_state.job_title : "New job";
   }
 
+  // Shared tail for every path that gets back a ChatResponse-shaped payload (real chat turns via
+  // sendMessage, and the local pre-flow's single combined submitIntake call) — pure extract-method
+  // from sendMessage's previous body, no behavior change.
+  function applyChatResponse(data) {
+    sessionId = data.session_id;
+    currentData = data;
+    currentPhase = data.phase;
+    if (data.phase !== "published") {
+      localStorage.setItem(
+        STORAGE_KEY,
+        JSON.stringify({ session_id: sessionId, job_title: data.job_state && data.job_state.job_title, updated_at: new Date().toISOString() })
+      );
+    }
+    renderMessages(data.messages, data.suggested_options, data.options_multi_select, data.asking_about_field);
+    renderDraftForm(data);
+    updateStatusBar(data);
+  }
+
   async function sendMessage(text) {
     clearError();
     const file = pendingFile;
@@ -1201,18 +1355,7 @@
         ? await api.postChatUpload(sessionId, text, file, showProcessingStatus)
         : await api.postChat(sessionId, text, showProcessingStatus);
       hideProcessingStatus();
-      sessionId = data.session_id;
-      currentData = data;
-      currentPhase = data.phase;
-      if (data.phase !== "published") {
-        localStorage.setItem(
-          STORAGE_KEY,
-          JSON.stringify({ session_id: sessionId, job_title: data.job_state && data.job_state.job_title, updated_at: new Date().toISOString() })
-        );
-      }
-      renderMessages(data.messages, data.suggested_options, data.options_multi_select, data.asking_about_field);
-      renderDraftForm(data);
-      updateStatusBar(data);
+      applyChatResponse(data);
     } catch (err) {
       hideProcessingStatus();
       showError(err.message || "Something went wrong. Please try again.");
@@ -1225,7 +1368,11 @@
     e.preventDefault();
     const text = chatInput.value.trim();
     if (!text && !pendingFile) return;
-    sendMessage(text);
+    if (localFlowStep && !pendingFile) {
+      handleLocalAnswer(text);
+    } else {
+      sendMessage(text);
+    }
   });
 
   chatInput.addEventListener("keydown", (e) => {
@@ -1261,6 +1408,7 @@
   function closeModal() {
     closeQuestionsModal();
     platformsDropdownOpen = false;
+    localFlowStep = null;
     overlay.classList.remove("open");
     document.body.style.overflow = "";
     closeTimer = setTimeout(() => {
@@ -1289,6 +1437,8 @@
     currentData = null;
     closeQuestionsModal();
     platformsDropdownOpen = false;
+    localFlowStep = "title";
+    localIntake = { jobTitle: null, location: null, salary: null, additionalInformation: null };
     renderAttachmentChip();
     clearError();
     renderMessages([], [], false);
@@ -1302,6 +1452,7 @@
     sessionId = existingSessionId;
     closeQuestionsModal();
     platformsDropdownOpen = false;
+    localFlowStep = null; // reopening a draft is never a local intake, even mid-way through one
     try {
       const data = await api.getChat(sessionId);
       currentData = data;

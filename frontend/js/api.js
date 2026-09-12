@@ -107,6 +107,10 @@ const api = {
     formData.append("file", file);
     return streamChatTurn(`${API_BASE}/chat/upload`, { method: "POST", body: formData }, onStatus);
   },
+  // The single combined call behind the local "Post a Job" pre-flow (see job-modal.js) — plain
+  // JSON request/response, not streamed like postChat/postChatUpload, since there's no multi-step
+  // graph turn to report progress on: one request in, one generated job description back.
+  postJobIntake: (payload) => apiRequest("/chat/intake", { method: "POST", body: JSON.stringify(payload) }),
   getChat: (sessionId) => apiRequest(`/chat/${encodeURIComponent(sessionId)}`),
   // Direct, silent job_state edit — no chat message, no bot reply. Used by the draft form's
   // field edits (title, experience, skills add/remove, company-context overrides, etc.).

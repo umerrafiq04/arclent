@@ -10,10 +10,14 @@ logger = logging.getLogger(__name__)
 
 from backend.agent.graph import get_compiled_graph
 from backend.agent.nodes import (
+    _apply_default_field_values,
     _apply_list_operation,
     _AUTO_GENERATE_RESPONSE,
+    _CHECKLIST_QUESTIONS,
     _job_state_from_record,
     _next_checklist_prompt,
+    _salary_question,
+    _skill_profile_for_job_title,
     apply_field_changes,
     generate_jd,
     publish_edit,
@@ -26,13 +30,15 @@ from backend.auth import get_current_recruiter
 from backend.database import (
     create_chat_session,
     get_chat_session_owner,
+    get_company_profile_by_id,
     get_job_by_session_id,
+    get_user_by_id,
     save_refined_jd,
     upsert_job_draft,
 )
 from backend.document_extract import DocumentExtractError, extract_text
 from backend.models import OPTIONAL_SKIPPABLE_FIELDS
-from backend.schemas import ChatMessage, ChatRequest, ChatResponse, JobStatePatch
+from backend.schemas import ChatMessage, ChatRequest, ChatResponse, JobIntakeRequest, JobStatePatch
 
 router = APIRouter(prefix="/api/chat", tags=["chat"])
 
@@ -237,6 +243,87 @@ async def post_chat_upload(
         stream_graph_turn(session_id, HumanMessage(content=combined), "Reading the uploaded document...", user),
         media_type="text/event-stream",
     )
+
+
+@router.post("/intake", response_model=ChatResponse)
+def post_job_intake(body: JobIntakeRequest, user: dict = Depends(get_current_recruiter)) -> ChatResponse:
+    """The single combined call behind the local "Post a Job" pre-flow (job title -> location ->
+    salary -> additional details, all collected client-side with zero LLM involvement — see
+    frontend/js/job-modal.js's local intake flow). Always mints a brand-new session, deterministically
+    fills required_skills/preferred_skills/responsibilities/job_category from
+    _skill_profile_for_job_title (a hardcoded, job-title-keyword lookup — never an LLM call), then
+    makes exactly ONE LLM call: generate_jd. This is the only path where a fresh job goes from zero
+    to a generated description in a single request; the existing chat-based flow (POST /api/chat,
+    still reachable for continuing/editing a job) is completely untouched.
+    """
+    session_id = _resolve_and_authorize_session(None, user)
+
+    profile = _skill_profile_for_job_title(body.job_title)
+    job_state = apply_field_changes(
+        {},
+        field_updates={
+            "job_title": body.job_title,
+            "job_category": profile.get("job_category"),
+            "location": body.location,
+            "salary": body.salary,
+            "additional_information": body.additional_information,
+        },
+        list_operations=[
+            {"field": "required_skills", "operation": "ADD", "values": profile["required_skills"]},
+            {"field": "preferred_skills", "operation": "ADD", "values": profile["preferred_skills"]},
+            {"field": "responsibilities", "operation": "ADD", "values": profile["responsibilities"]},
+        ],
+    )
+    job_state = _apply_default_field_values(job_state)
+
+    if not hard_floor_met(job_state):
+        raise HTTPException(status_code=400, detail="Job title, location, and salary are all required.")
+
+    company_profile = get_company_profile_by_id(user["company_id"]) or {}
+    recruiter_user = get_user_by_id(user["id"])
+    recruiter_name = recruiter_user["name"].strip().split(" ")[0] if recruiter_user and recruiter_user.get("name") else None
+
+    # Synthesized, fully deterministic transcript (zero LLM) so reopening this draft later shows a
+    # faithful history — mirrors exactly what a real chat conversation asking these same questions
+    # would have produced.
+    salary_question = _salary_question({"location": body.location})
+    seed_messages = [
+        HumanMessage(content=body.job_title),
+        AIMessage(content=_CHECKLIST_QUESTIONS["location"]),
+        HumanMessage(content=body.location),
+        AIMessage(content=salary_question),
+        HumanMessage(content=body.salary),
+        AIMessage(content="Anything else you'd like to add? (optional — company culture, specific requirements, etc.)"),
+        HumanMessage(content=body.additional_information or "Skip"),
+    ]
+
+    graph = get_compiled_graph()
+    config = {"configurable": {"thread_id": session_id, "company_id": user["company_id"], "user_id": user["id"]}}
+    seed = {
+        "company_profile": company_profile,
+        "job_state": job_state,
+        "phase": "collecting",
+        "job_id": None,
+        "jd_versions": {},
+        "selected_version": None,
+        "jd_stale": False,
+        "missing_essential": [],
+        "asking_about_field": None,
+        "suggested_options": [],
+        "options_multi_select": False,
+        "skipped_checklist_fields": [],
+        "messages": seed_messages,
+    }
+    if recruiter_name:
+        seed["recruiter_name"] = recruiter_name
+    graph.update_state(config, seed)
+
+    state = graph.get_state(config).values
+    result = generate_jd(state, config)  # the one and only LLM call in this whole flow
+    graph.update_state(config, result)
+
+    final_state = graph.get_state(config).values
+    return _to_response(session_id, final_state)
 
 
 @router.get("/{session_id}", response_model=ChatResponse)

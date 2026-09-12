@@ -9,6 +9,8 @@ from pydantic import BaseModel
 from backend.config import (
     DEEPSEEK_API_KEY,
     DEEPSEEK_MODEL,
+    GROQ_API_KEY,
+    GROQ_MODEL,
     LLM_PROVIDER,
     MISTRAL_API_KEY,
     MISTRAL_MODEL,
@@ -22,8 +24,8 @@ _llm: BaseChatModel | None = None
 
 
 def get_llm() -> BaseChatModel:
-    """Provider is chosen by LLM_PROVIDER ("deepseek" or "mistral") — everything downstream
-    (call_structured, every node that calls it) only depends on the standard LangChain
+    """Provider is chosen by LLM_PROVIDER ("groq", "deepseek", or "mistral") — everything
+    downstream (call_structured, every node that calls it) only depends on the standard LangChain
     BaseChatModel + with_structured_output() interface, so swapping providers never needs to
     touch any calling code, only this one function.
     """
@@ -37,6 +39,14 @@ def get_llm() -> BaseChatModel:
                     "MISTRAL_API_KEY is not set. Copy .env.example to .env and add your key."
                 )
             _llm = ChatMistralAI(model=MISTRAL_MODEL, api_key=MISTRAL_API_KEY, temperature=0.2)
+        elif LLM_PROVIDER == "groq":
+            from langchain_groq import ChatGroq
+
+            if not GROQ_API_KEY:
+                raise RuntimeError(
+                    "GROQ_API_KEY is not set. Copy .env.example to .env and add your key."
+                )
+            _llm = ChatGroq(model=GROQ_MODEL, api_key=GROQ_API_KEY, temperature=0.2)
         else:
             from langchain_deepseek import ChatDeepSeek
 
