@@ -182,6 +182,18 @@ def _is_rate_limited(exc: Exception) -> bool:
     return "429" in str(exc) or "rate_limited" in str(exc).lower()
 
 
+def _is_daily_quota_exhausted(exc: Exception) -> bool:
+    """A per-DAY token cap (Groq: 'tokens per day (TPD)') is fundamentally different from a
+    per-minute/per-second burst limit — it cannot possibly clear within the few seconds retries
+    run over, so every retry is guaranteed to fail identically. Worse, live-observed: the
+    account's reported daily usage kept climbing between consecutive failures rather than
+    recovering, so blindly retrying 2-3x per attempt was actively making the outage longer, not
+    just failing to help. Detected specifically so we fail once, fast, instead of 3 times slowly.
+    """
+    text = str(exc).lower()
+    return "tokens per day" in text or "(tpd)" in text
+
+
 def call_structured(schema: type[T], messages: list[BaseMessage], retries: int = 1) -> T:
     """Invoke the LLM with structured output, retrying on failure.
 
@@ -190,6 +202,9 @@ def call_structured(schema: type[T], messages: list[BaseMessage], retries: int =
     sustained burst and surface a confusing "didn't catch that" fallback to the recruiter for
     what was really just a transient spike — a couple seconds of backoff turns a real user's
     occasional 429 into a slightly slower reply instead of a dropped message.
+
+    A daily-quota exhaustion (see _is_daily_quota_exhausted) is the opposite case: retrying
+    cannot help, so we stop immediately instead of burning 2 more guaranteed-failing attempts.
 
     Callers are responsible for handling the case where every attempt fails
     (they should keep existing state untouched and ask the recruiter to rephrase).
@@ -205,6 +220,8 @@ def call_structured(schema: type[T], messages: list[BaseMessage], retries: int =
         except Exception as exc:  # noqa: BLE001 - structured-output failures are heterogeneous
             last_error = exc
             logger.warning("Structured output attempt %s failed: %s", attempt + 1, exc)
+            if _is_daily_quota_exhausted(exc):
+                break
             if attempt < retries and _is_rate_limited(exc):
                 time.sleep(2.5 * (attempt + 1))
     assert last_error is not None
