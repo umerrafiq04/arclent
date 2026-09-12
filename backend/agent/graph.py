@@ -561,6 +561,16 @@ JOB DETAILS (describe the position itself — use these as-is EXCEPT job_title, 
 preferred_skills, and responsibilities are the CURRENT job_state lists to proofread, see "PROOFREAD MIRROR" below):
 {job_state_json}
 
+ADDITIONAL_INFORMATION — read this field carefully if it's present and non-empty: it's free-form context, notes, or
+requirements the recruiter typed specifically so they'd end up in the final posting — this is the ONE reason that
+field exists. Do not just let it sit unused in the raw data above. Actually incorporate its substance into whichever
+section(s) of the JD it naturally belongs in (job_summary, about_role, responsibilities, required_skills/
+preferred_skills, stand_out, benefits — wherever it fits the content), the same way you would if the recruiter had
+said the exact same thing as a normal field value. If it names a concrete requirement or fact, treat it as a real
+fact from the recruiter (not something to hedge or soften); if it's more like a tone/culture note, let it flavor the
+prose. Never fabricate anything beyond what it actually says, and never invent a section just to force it in if it
+doesn't fit naturally — but a real, specific note here should visibly show up in the output, not disappear.
+
 {job_title_headline_instruction}
 
 PROOFREAD MIRROR — required_skills, preferred_skills, and responsibilities: output your own required_skills/

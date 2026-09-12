@@ -340,9 +340,9 @@
 
   // A brief, slightly-randomized "typing" pause between local questions — without it, tapping a
   // chip and having the next question appear in the same instant reads as a static form, not a
-  // conversation. Reuses the same processing-bubble UI the real backend-driven turns show (just
-  // with no label — nothing real is "processing," this is purely a pacing/feel device), so it's
-  // visually consistent with the rest of the chat rather than a second, different-looking spinner.
+  // conversation. Reuses the same processing-bubble UI (dot + label) the real backend-driven turns
+  // show — nothing real is "processing" here, this is purely a pacing/feel device, but it should
+  // still look and read like the bot is genuinely composing a reply, not a different-looking spinner.
   function localThinkingDelay() {
     return new Promise((resolve) => setTimeout(resolve, 450 + Math.random() * 450));
   }
@@ -389,31 +389,14 @@
     return symbol ? `${base} (in ${symbol}, based on the location you gave)` : base;
   }
 
-  // Local equivalent of appendSkipButton — that one always calls the real skipCurrentField/
-  // /skip-field endpoint, which doesn't apply here (there's no backend session yet). Multi-select
-  // chip rows disable their own "Add Selected" confirm button until at least one chip is picked
-  // (appendChips), so a genuinely optional multi-select question like platforms still needs its
-  // own separate way to move on with zero selections.
-  function appendLocalSkipButton(afterRow) {
-    const row = document.createElement("div");
-    row.className = "jm-skip-row";
-    const skipBtn = document.createElement("button");
-    skipBtn.type = "button";
-    skipBtn.className = "jm-skip-btn";
-    skipBtn.textContent = "Skip this";
-    skipBtn.addEventListener("click", () => {
-      messageList.querySelectorAll(".jm-chip, .jm-chip-confirm, .jm-skip-btn").forEach((c) => (c.disabled = true));
-      handleLocalAnswer("");
-    });
-    row.appendChild(skipBtn);
-    afterRow.insertAdjacentElement("afterend", row);
-    messageList.scrollTop = messageList.scrollHeight;
-  }
-
+  // Mandatory, same tier as location/salary below — no Skip affordance. The multi-select confirm
+  // button (appendChips) already stays disabled until at least one chip is picked, so tapping
+  // chips alone can't submit an empty answer; typing free text remains the one universal fallback
+  // every question in this flow has, same as location/salary.
   function renderLocalPlatformsQuestion() {
     const row = appendMessage("ai", "Which platform(s) are you hiring for?");
     const chipRow = appendChips(row, PLATFORM_OPTIONS, true, handleLocalAnswer);
-    appendLocalSkipButton(chipRow || row);
+    appendTypeHint(chipRow || row);
   }
 
   function renderLocalLocationQuestion() {
@@ -472,7 +455,7 @@
       return;
     }
 
-    showProcessingStatus("");
+    showProcessingStatus("Thinking...");
     await localThinkingDelay();
     hideProcessingStatus();
 
