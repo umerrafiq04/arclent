@@ -384,10 +384,10 @@ async def post_chat_upload(
 
 @chat_router.post("/intake", response_model=ChatResponse)
 def post_job_intake(body: JobIntakeRequest, user: dict = Depends(get_current_recruiter)) -> ChatResponse:
-    """The single combined call behind the local "Post a Job" pre-flow (job title -> location ->
-    salary -> additional details, all collected client-side with zero LLM involvement — see
-    frontend/js/job-modal.js's local intake flow). Always mints a brand-new session, deterministically
-    fills required_skills/preferred_skills/responsibilities/job_category from
+    """The single combined call behind the local "Post a Job" pre-flow (job title -> platforms ->
+    location -> salary -> additional details, all collected client-side with zero LLM involvement
+    — see frontend/js/job-modal.js's local intake flow). Always mints a brand-new session,
+    deterministically fills required_skills/preferred_skills/responsibilities/job_category from
     _skill_profile_for_job_title (a hardcoded, job-title-keyword lookup — never an LLM call), then
     makes exactly ONE LLM call: generate_jd. This is the only path where a fresh job goes from zero
     to a generated description in a single request; the existing chat-based flow (POST /api/chat,
@@ -409,6 +409,7 @@ def post_job_intake(body: JobIntakeRequest, user: dict = Depends(get_current_rec
             {"field": "required_skills", "operation": "ADD", "values": profile["required_skills"]},
             {"field": "preferred_skills", "operation": "ADD", "values": profile["preferred_skills"]},
             {"field": "responsibilities", "operation": "ADD", "values": profile["responsibilities"]},
+            {"field": "platforms", "operation": "ADD", "values": body.platforms},
         ],
     )
     job_state = _apply_default_field_values(job_state)
@@ -426,6 +427,8 @@ def post_job_intake(body: JobIntakeRequest, user: dict = Depends(get_current_rec
     salary_question = _salary_question({"location": body.location})
     seed_messages = [
         HumanMessage(content=body.job_title),
+        AIMessage(content=_CHECKLIST_QUESTIONS["platforms"]),
+        HumanMessage(content=", ".join(body.platforms) if body.platforms else "Skip"),
         AIMessage(content=_CHECKLIST_QUESTIONS["location"]),
         HumanMessage(content=body.location),
         AIMessage(content=salary_question),

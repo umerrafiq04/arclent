@@ -328,15 +328,24 @@
     return pool.slice(0, count);
   }
 
-  // Local, fully client-side "Post a Job" pre-flow — job title -> location -> salary ->
-  // additional details, answered via chips or typed text with ZERO backend/LLM calls per
-  // question (mirrors the equivalent hardcoded tables in backend/agent/nodes.py so the visible
-  // UX matches what the old chat-driven checklist used to show). Once all four are collected,
-  // submitIntake() below makes the ONE combined API call that creates the job and generates its
-  // description. localFlowStep is null whenever a real backend-driven conversation is in
-  // progress (an existing/reopened draft) so handleLocalAnswer is never mistakenly invoked then.
-  let localFlowStep = null; // "title" | "location" | "salary" | "additional" | null
-  let localIntake = { jobTitle: null, location: null, salary: null, additionalInformation: null };
+  // Local, fully client-side "Post a Job" pre-flow — job title -> platforms -> location ->
+  // salary -> additional details, answered via chips or typed text with ZERO backend/LLM calls
+  // per question (mirrors the equivalent hardcoded tables in backend/agent/graph.py so the
+  // visible UX matches what the old chat-driven checklist used to show). Once all five are
+  // collected, submitIntake() below makes the ONE combined API call that creates the job and
+  // generates its description. localFlowStep is null whenever a real backend-driven conversation
+  // is in progress (an existing/reopened draft) so handleLocalAnswer is never mistakenly invoked.
+  let localFlowStep = null; // "title" | "platforms" | "location" | "salary" | "additional" | null
+  let localIntake = { jobTitle: null, platforms: [], location: null, salary: null, additionalInformation: null };
+
+  // A brief, slightly-randomized "typing" pause between local questions — without it, tapping a
+  // chip and having the next question appear in the same instant reads as a static form, not a
+  // conversation. Reuses the same processing-bubble UI the real backend-driven turns show (just
+  // with no label — nothing real is "processing," this is purely a pacing/feel device), so it's
+  // visually consistent with the rest of the chat rather than a second, different-looking spinner.
+  function localThinkingDelay() {
+    return new Promise((resolve) => setTimeout(resolve, 450 + Math.random() * 450));
+  }
 
   // Mirrors backend/agent/nodes.py's _LOCATION_CHIP_POOL — keep both in sync if either changes.
   const LOCATION_CHIP_POOL = [
@@ -380,6 +389,33 @@
     return symbol ? `${base} (in ${symbol}, based on the location you gave)` : base;
   }
 
+  // Local equivalent of appendSkipButton — that one always calls the real skipCurrentField/
+  // /skip-field endpoint, which doesn't apply here (there's no backend session yet). Multi-select
+  // chip rows disable their own "Add Selected" confirm button until at least one chip is picked
+  // (appendChips), so a genuinely optional multi-select question like platforms still needs its
+  // own separate way to move on with zero selections.
+  function appendLocalSkipButton(afterRow) {
+    const row = document.createElement("div");
+    row.className = "jm-skip-row";
+    const skipBtn = document.createElement("button");
+    skipBtn.type = "button";
+    skipBtn.className = "jm-skip-btn";
+    skipBtn.textContent = "Skip this";
+    skipBtn.addEventListener("click", () => {
+      messageList.querySelectorAll(".jm-chip, .jm-chip-confirm, .jm-skip-btn").forEach((c) => (c.disabled = true));
+      handleLocalAnswer("");
+    });
+    row.appendChild(skipBtn);
+    afterRow.insertAdjacentElement("afterend", row);
+    messageList.scrollTop = messageList.scrollHeight;
+  }
+
+  function renderLocalPlatformsQuestion() {
+    const row = appendMessage("ai", "Which platform(s) are you hiring for?");
+    const chipRow = appendChips(row, PLATFORM_OPTIONS, true, handleLocalAnswer);
+    appendLocalSkipButton(chipRow || row);
+  }
+
   function renderLocalLocationQuestion() {
     const row = appendMessage(
       "ai",
@@ -415,8 +451,11 @@
 
   // Dispatches one answer in the local pre-flow to the next step, entirely client-side. A pending
   // file attachment always falls back to the real backend chat (document upload isn't part of
-  // this local flow) — unchanged behavior from before this pre-flow existed.
-  function handleLocalAnswer(text) {
+  // this local flow) — unchanged behavior from before this pre-flow existed. A short "thinking"
+  // pause (see localThinkingDelay) separates every LOCAL-to-LOCAL transition from the next — the
+  // final step instead flows straight into submitIntake(), which already has its own real
+  // processing indicator for the actual network call, so it isn't doubled up.
+  async function handleLocalAnswer(text) {
     text = (text || "").trim();
     if (pendingFile) {
       sendMessage(text);
@@ -426,8 +465,23 @@
     appendMessage("user", text || "Skip");
     chatInput.value = "";
 
+    if (localFlowStep === "additional") {
+      localIntake.additionalInformation = text || null;
+      localFlowStep = null;
+      submitIntake();
+      return;
+    }
+
+    showProcessingStatus("");
+    await localThinkingDelay();
+    hideProcessingStatus();
+
     if (localFlowStep === "title") {
       localIntake.jobTitle = text;
+      localFlowStep = "platforms";
+      renderLocalPlatformsQuestion();
+    } else if (localFlowStep === "platforms") {
+      localIntake.platforms = text ? text.split(",").map((s) => s.trim()).filter(Boolean) : [];
       localFlowStep = "location";
       renderLocalLocationQuestion();
     } else if (localFlowStep === "location") {
@@ -438,10 +492,6 @@
       localIntake.salary = text;
       localFlowStep = "additional";
       renderLocalAdditionalQuestion();
-    } else if (localFlowStep === "additional") {
-      localIntake.additionalInformation = text || null;
-      localFlowStep = null;
-      submitIntake();
     }
   }
 
@@ -454,6 +504,7 @@
     try {
       const data = await api.postJobIntake({
         job_title: localIntake.jobTitle,
+        platforms: localIntake.platforms,
         location: localIntake.location,
         salary: localIntake.salary,
         additional_information: localIntake.additionalInformation,
@@ -1447,7 +1498,7 @@
     closeQuestionsModal();
     platformsDropdownOpen = false;
     localFlowStep = "title";
-    localIntake = { jobTitle: null, location: null, salary: null, additionalInformation: null };
+    localIntake = { jobTitle: null, platforms: [], location: null, salary: null, additionalInformation: null };
     renderAttachmentChip();
     clearError();
     renderMessages([], [], false);
