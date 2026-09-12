@@ -12,7 +12,7 @@ import time
 from typing import Annotated, Literal, TypedDict, TypeVar
 
 from langchain_core.language_models.chat_models import BaseChatModel
-from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, RemoveMessage, SystemMessage
 from langchain_core.runnables import RunnableConfig
 from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.graph import END, START, StateGraph
@@ -2383,7 +2383,7 @@ def _jd_document_message(version: str, jd: dict) -> AIMessage:
     return AIMessage(content="", additional_kwargs={"jd_document": jd, "jd_version": version})
 
 
-def generate_jd(state: GraphState, config: RunnableConfig) -> dict:
+def generate_jd(state: GraphState, config: RunnableConfig, auto_triggered: bool = False) -> dict:
     """Generates ONE complete job description draft — not a pair to choose between. Immediately
     marks it selected (there's nothing to choose), so Publish becomes available right away.
 
@@ -2396,6 +2396,15 @@ def generate_jd(state: GraphState, config: RunnableConfig) -> dict:
     a hard lock (verbatim-restore whatever the recruiter had last touched) and that was wrong in
     the other direction: it froze hand-edited content so hard that Regenerate couldn't even fix an
     obvious typo in it, which defeats the entire point of asking for a regeneration.
+
+    `auto_triggered` is only ever True via the graph's own route_after_apply -> generate_jd edge
+    (see build_graph) — the one case where analyze_turn's own "Perfect — that's everything I need.
+    Drafting your job post now..." announcement was JUST committed to state["messages"] this same
+    turn, immediately before this node ran. If generation then fails, leaving that announcement
+    standing next to the honest failure message reads as a contradiction (reported live: the
+    recruiter saw "Perfect..." followed immediately by "I hit a snag..."). The two direct callers
+    (POST /generate, POST /chat/intake) never set this — their preceding message is the recruiter's
+    own, or the synthesized intake transcript, never a same-turn promise this function just broke.
     """
     company_profile = state.get("company_profile") or {}
     job_state = state.get("job_state") or {}
@@ -2421,7 +2430,14 @@ def generate_jd(state: GraphState, config: RunnableConfig) -> dict:
             "you entered, our end had trouble keeping up for a moment. Please click Generate "
             "again in a few seconds."
         )
-        return {"messages": [AIMessage(content=response)], "last_response": response}
+        new_messages: list[BaseMessage] = []
+        if auto_triggered:
+            prior_messages = state.get("messages") or []
+            prior_announcement = prior_messages[-1] if prior_messages else None
+            if prior_announcement is not None and getattr(prior_announcement, "id", None):
+                new_messages.append(RemoveMessage(id=prior_announcement.id))
+        new_messages.append(AIMessage(content=response))
+        return {"messages": new_messages, "last_response": response}
 
     output_dict = output.model_dump(mode="json")
     # The PROOFREAD MIRROR fields (see prompt) never get stored on the JD document itself — only
@@ -2638,7 +2654,9 @@ def build_graph() -> StateGraph:
     graph.add_node("load_context", load_context)
     graph.add_node("analyze_turn", analyze_turn)
     graph.add_node("apply_updates", apply_updates)
-    graph.add_node("generate_jd", generate_jd)
+    # auto_triggered=True only here — this is the sole path where generate_jd runs as a same-turn
+    # continuation of analyze_turn's own "drafting now" announcement (see generate_jd's docstring).
+    graph.add_node("generate_jd", lambda state, config: generate_jd(state, config, auto_triggered=True))
     graph.add_node("refine_jd", refine_jd)
     graph.add_node("publish_job", publish_job)
     graph.add_node("publish_edit", publish_edit)
