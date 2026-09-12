@@ -1,15 +1,21 @@
+"""Consolidated FastAPI route handlers — auth, chat/job-creation, company profile, jobs
+(recruiter + public), and admin, all in one file per an explicit directory-simplicity decision
+(previously split across backend/routes/{auth,chat,company,jobs,admin}.py)."""
+
+import csv
+import io
 import json
 import logging
+import sqlite3
 import uuid
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, Response, UploadFile
 from fastapi.responses import StreamingResponse
 from langchain_core.messages import AIMessage, HumanMessage
 
 logger = logging.getLogger(__name__)
 
-from backend.agent.graph import get_compiled_graph
-from backend.agent.nodes import (
+from backend.agent.graph import (
     _apply_default_field_values,
     _apply_list_operation,
     _AUTO_GENERATE_RESPONSE,
@@ -20,27 +26,158 @@ from backend.agent.nodes import (
     _skill_profile_for_job_title,
     apply_field_changes,
     generate_jd,
+    get_compiled_graph,
+    hard_floor_met,
     publish_edit,
     publish_job,
     ready_to_generate,
     route_after_apply,
 )
-from backend.agent.sufficiency import hard_floor_met
-from backend.auth import get_current_recruiter
+from backend.auth import (
+    COOKIE_NAME,
+    check_signin_rate_limit,
+    clear_session_cookie,
+    clear_signin_attempts,
+    create_session,
+    get_current_recruiter,
+    get_current_user,
+    hash_password,
+    record_signin_attempt,
+    require_admin,
+    set_session_cookie,
+    verify_login,
+)
 from backend.database import (
+    create_application,
     create_chat_session,
+    create_company_and_recruiter,
+    delete_auth_session,
+    delete_job,
+    get_admin_job_by_id,
     get_chat_session_owner,
     get_company_profile_by_id,
+    get_company_profile_by_name,
     get_job_by_session_id,
+    get_published_job_by_job_id,
+    get_user_by_email,
     get_user_by_id,
+    list_all_jobs_admin,
+    list_applications_for_job,
+    list_jobs_for_company,
+    list_published_jobs,
     save_refined_jd,
+    set_accepting_applications,
+    update_company_profile,
     upsert_job_draft,
 )
 from backend.document_extract import DocumentExtractError, extract_text
 from backend.models import OPTIONAL_SKIPPABLE_FIELDS
-from backend.schemas import ChatMessage, ChatRequest, ChatResponse, JobIntakeRequest, JobStatePatch
+from backend.schemas import (
+    AcceptingApplicationsUpdate,
+    ChatMessage,
+    ChatRequest,
+    ChatResponse,
+    CompanyProfileUpdate,
+    JobApplicationRequest,
+    JobIntakeRequest,
+    JobStatePatch,
+    SigninRequest,
+    SignupRequest,
+    UserResponse,
+)
 
-router = APIRouter(prefix="/api/chat", tags=["chat"])
+
+# ============================================================================
+# AUTH (formerly routes/auth.py)
+# ============================================================================
+
+auth_router = APIRouter(prefix="/api/auth", tags=["auth"])
+
+MIN_PASSWORD_LENGTH = 8
+
+
+def _user_response(user: dict) -> UserResponse:
+    company_name = None
+    if user.get("company_id") is not None:
+        profile = get_company_profile_by_id(user["company_id"])
+        company_name = profile["company_name"] if profile else None
+    return UserResponse(
+        id=user["id"],
+        email=user["email"],
+        name=user["name"],
+        role=user["role"],
+        company_id=user.get("company_id"),
+        company_name=company_name,
+    )
+
+
+@auth_router.post("/signup", response_model=UserResponse, status_code=201)
+def signup(body: SignupRequest, response: Response) -> UserResponse:
+    email = body.email.strip().lower()
+    name = body.name.strip()
+    company_name = body.company_name.strip()
+
+    if len(body.password) < MIN_PASSWORD_LENGTH:
+        raise HTTPException(status_code=422, detail=f"Password must be at least {MIN_PASSWORD_LENGTH} characters.")
+    if not name:
+        raise HTTPException(status_code=422, detail="Name is required.")
+    if not company_name:
+        raise HTTPException(status_code=422, detail="Company name is required.")
+
+    if get_user_by_email(email):
+        raise HTTPException(status_code=409, detail="That email is already registered.")
+    if get_company_profile_by_name(company_name):
+        raise HTTPException(status_code=409, detail="That company name is already registered.")
+
+    company_fields = body.model_dump(exclude={"name", "email", "password", "company_name"}, exclude_unset=True)
+    password_hash = hash_password(body.password)
+    try:
+        created = create_company_and_recruiter(company_name, company_fields, email, password_hash, name)
+    except sqlite3.IntegrityError:
+        # Race with another signup for the same email/company_name between the checks above
+        # and the insert — rare, but must still surface as a clean error, not a 500.
+        raise HTTPException(status_code=409, detail="That email or company name is already registered.")
+
+    user = created["user"]
+    token = create_session(user["id"])
+    set_session_cookie(response, token)
+    return _user_response(user)
+
+
+@auth_router.post("/signin", response_model=UserResponse)
+def signin(body: SigninRequest, response: Response) -> UserResponse:
+    email = body.email.strip().lower()
+    check_signin_rate_limit(email)
+
+    user = verify_login(email, body.password)
+    if user is None:
+        record_signin_attempt(email)
+        raise HTTPException(status_code=401, detail="Invalid email or password.")
+
+    clear_signin_attempts(email)
+    token = create_session(user["id"])
+    set_session_cookie(response, token)
+    return _user_response(user)
+
+
+@auth_router.post("/logout", status_code=204)
+def logout(request: Request, response: Response) -> None:
+    token = request.cookies.get(COOKIE_NAME)
+    if token:
+        delete_auth_session(token)
+    clear_session_cookie(response)
+
+
+@auth_router.get("/me", response_model=UserResponse)
+def me(user: dict = Depends(get_current_user)) -> UserResponse:
+    return _user_response(user)
+
+
+# ============================================================================
+# CHAT / JOB CREATION + EDITING (formerly routes/chat.py)
+# ============================================================================
+
+chat_router = APIRouter(prefix="/api/chat", tags=["chat"])
 
 
 def _resolve_and_authorize_session(session_id: str | None, user: dict) -> str:
@@ -210,7 +347,7 @@ def stream_graph_turn(session_id: str, human_message: HumanMessage, initial_labe
     yield _sse("result", response.model_dump())
 
 
-@router.post("")
+@chat_router.post("")
 def post_chat(body: ChatRequest, user: dict = Depends(get_current_recruiter)) -> StreamingResponse:
     session_id = _resolve_and_authorize_session(body.session_id, user)
     return StreamingResponse(
@@ -219,7 +356,7 @@ def post_chat(body: ChatRequest, user: dict = Depends(get_current_recruiter)) ->
     )
 
 
-@router.post("/upload")
+@chat_router.post("/upload")
 async def post_chat_upload(
     session_id: str | None = Form(None),
     message: str = Form(""),
@@ -245,7 +382,7 @@ async def post_chat_upload(
     )
 
 
-@router.post("/intake", response_model=ChatResponse)
+@chat_router.post("/intake", response_model=ChatResponse)
 def post_job_intake(body: JobIntakeRequest, user: dict = Depends(get_current_recruiter)) -> ChatResponse:
     """The single combined call behind the local "Post a Job" pre-flow (job title -> location ->
     salary -> additional details, all collected client-side with zero LLM involvement — see
@@ -326,7 +463,7 @@ def post_job_intake(body: JobIntakeRequest, user: dict = Depends(get_current_rec
     return _to_response(session_id, final_state)
 
 
-@router.get("/{session_id}", response_model=ChatResponse)
+@chat_router.get("/{session_id}", response_model=ChatResponse)
 def get_chat(session_id: str, user: dict = Depends(get_current_recruiter)) -> ChatResponse:
     _authorize_session(session_id, user)
 
@@ -363,7 +500,7 @@ def get_chat(session_id: str, user: dict = Depends(get_current_recruiter)) -> Ch
     raise HTTPException(status_code=404, detail="No conversation found for this session_id")
 
 
-@router.patch("/{session_id}/job-state", response_model=ChatResponse)
+@chat_router.patch("/{session_id}/job-state", response_model=ChatResponse)
 def patch_job_state(session_id: str, body: JobStatePatch, user: dict = Depends(get_current_recruiter)) -> ChatResponse:
     """Direct, silent edit to the draft — no chat message, no LLM call, no bot reply. This is
     what the draft form's field edits (title, experience, salary, skills add/remove, company
@@ -443,7 +580,7 @@ def patch_job_state(session_id: str, body: JobStatePatch, user: dict = Depends(g
     return _to_response(session_id, final_state)
 
 
-@router.post("/{session_id}/generate", response_model=ChatResponse)
+@chat_router.post("/{session_id}/generate", response_model=ChatResponse)
 def generate_session(session_id: str, user: dict = Depends(get_current_recruiter)) -> ChatResponse:
     """The ONLY path that actually calls the model to WRITE the job description — a direct
     action the "Generate Full Description"/"Regenerate" button calls, never a side effect of a
@@ -480,7 +617,7 @@ def generate_session(session_id: str, user: dict = Depends(get_current_recruiter
     return _to_response(session_id, final_state)
 
 
-@router.post("/{session_id}/skip-field", response_model=ChatResponse)
+@chat_router.post("/{session_id}/skip-field", response_model=ChatResponse)
 def skip_field(session_id: str, user: dict = Depends(get_current_recruiter)) -> ChatResponse:
     """Direct, silent action the "Skip this" button calls. There's nothing for the recruiter to
     have "said", so unlike every other chat action this adds NO user message to the transcript
@@ -553,7 +690,7 @@ def skip_field(session_id: str, user: dict = Depends(get_current_recruiter)) -> 
     return _to_response(session_id, final_state)
 
 
-@router.post("/{session_id}/publish", response_model=ChatResponse)
+@chat_router.post("/{session_id}/publish", response_model=ChatResponse)
 def publish_session(session_id: str, user: dict = Depends(get_current_recruiter)) -> ChatResponse:
     """The ONLY path that actually publishes a job or a published-job edit — a direct action the
     "Publish Job"/"Publish Edit" button calls, never a side effect of a chat message (see the
@@ -589,3 +726,172 @@ def publish_session(session_id: str, user: dict = Depends(get_current_recruiter)
 
     final_state = graph.get_state(config).values
     return _to_response(session_id, final_state)
+
+
+# ============================================================================
+# COMPANY PROFILE (formerly routes/company.py)
+# ============================================================================
+
+company_router = APIRouter(prefix="/api/company-profile", tags=["company"])
+
+
+@company_router.get("")
+def get_company_profile(user: dict = Depends(get_current_recruiter)) -> dict:
+    profile = get_company_profile_by_id(user["company_id"])
+    if not profile:
+        raise HTTPException(status_code=404, detail="Company profile not found")
+    return profile
+
+
+@company_router.put("")
+def put_company_profile(body: CompanyProfileUpdate, user: dict = Depends(get_current_recruiter)) -> dict:
+    # company_id always comes from the authenticated session, never the request body —
+    # there is nothing here for a client to tamper with to reach another company's row.
+    updated = update_company_profile(user["company_id"], body.model_dump(exclude_unset=True))
+    if not updated:
+        raise HTTPException(status_code=500, detail="Failed to update company profile")
+    return updated
+
+
+# ============================================================================
+# JOBS — recruiter + public (formerly routes/jobs.py)
+# ============================================================================
+
+jobs_router = APIRouter(prefix="/api/jobs", tags=["jobs"])
+jobs_public_router = APIRouter(prefix="/api/public/jobs", tags=["public-jobs"])
+
+
+@jobs_router.get("")
+def get_jobs_for_recruiter(user: dict = Depends(get_current_recruiter)) -> list[dict]:
+    """Jobs (draft + published) for the authenticated recruiter's own company only."""
+    return list_jobs_for_company(user["company_id"])
+
+
+@jobs_router.get("/report")
+def get_jobs_report(user: dict = Depends(get_current_recruiter)) -> Response:
+    """CSV export of this company's own jobs — real fields only (title, status, location,
+    employment type, posted date, accepting-applications). No proposal/hire counts: there is
+    no applications-tracking table in this schema yet, so those numbers don't exist to export.
+    """
+    jobs = list_jobs_for_company(user["company_id"])
+    buffer = io.StringIO()
+    writer = csv.writer(buffer)
+    writer.writerow(
+        ["Job ID", "Title", "Status", "Employment Type", "Location", "Work Mode", "Posted Date", "Accepting Applications"]
+    )
+    for job in jobs:
+        writer.writerow(
+            [
+                job.get("job_id") or "",
+                job.get("job_title") or "",
+                job.get("status") or "",
+                job.get("employment_type") or "",
+                job.get("location") or "",
+                job.get("work_mode") or "",
+                job.get("published_at") or job.get("created_at") or "",
+                "Yes" if job.get("accepting_applications") else "No",
+            ]
+        )
+    return Response(
+        content=buffer.getvalue(),
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=arclent-jobs-report.csv"},
+    )
+
+
+@jobs_router.put("/{session_id}/accepting-applications")
+def put_accepting_applications(
+    session_id: str,
+    body: AcceptingApplicationsUpdate,
+    user: dict = Depends(get_current_recruiter),
+) -> dict:
+    """Closes/reopens a published job to new applicants — the job stays published and stays
+    listed publicly either way; this only toggles whether it's still accepting applicants.
+    """
+    job = get_job_by_session_id(session_id)
+    if not job or job["company_id"] != user["company_id"]:
+        raise HTTPException(status_code=404, detail="Job not found")
+    if job["status"] != "published":
+        raise HTTPException(status_code=400, detail="Only a published job can be opened or closed to applications.")
+    return set_accepting_applications(session_id, body.accepting_applications)
+
+
+@jobs_router.delete("/{session_id}")
+def delete_job_route(session_id: str, user: dict = Depends(get_current_recruiter)) -> dict:
+    """Permanently removes a job (draft or published) belonging to the recruiter's own company."""
+    job = get_job_by_session_id(session_id)
+    if not job or job["company_id"] != user["company_id"]:
+        raise HTTPException(status_code=404, detail="Job not found")
+    delete_job(session_id)
+    return {"deleted": True}
+
+
+@jobs_public_router.get("")
+def get_public_jobs() -> list[dict]:
+    """Published jobs only, across all companies — Page 3's public listing."""
+    return list_published_jobs()
+
+
+@jobs_public_router.get("/{job_id}")
+def get_public_job(job_id: str) -> dict:
+    job = get_published_job_by_job_id(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    return job
+
+
+@jobs_public_router.post("/{job_id}/apply")
+def apply_to_job(job_id: str, body: JobApplicationRequest) -> dict:
+    """A candidate's submission on the public Apply form — no auth, anyone can apply."""
+    job = get_published_job_by_job_id(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    if not job.get("accepting_applications"):
+        raise HTTPException(status_code=400, detail="This job is no longer accepting applications.")
+    # Only keep answers for questions that actually exist on this job right now — the recruiter may
+    # have edited custom_questions since the candidate loaded the page, so the submitted keys aren't
+    # trusted as-is.
+    current_questions = set(job.get("custom_questions") or [])
+    answers = {q: a for q, a in body.answers.items() if q in current_questions}
+    return create_application(job_id, answers)
+
+
+@jobs_router.get("/{session_id}/applications")
+def get_applications_for_job(session_id: str, user: dict = Depends(get_current_recruiter)) -> list[dict]:
+    """Submitted applications for one of the recruiter's own jobs, newest first."""
+    job = get_job_by_session_id(session_id)
+    if not job or job["company_id"] != user["company_id"]:
+        raise HTTPException(status_code=404, detail="Job not found")
+    if not job.get("job_id"):
+        return []
+    return list_applications_for_job(job["job_id"])
+
+
+# ============================================================================
+# ADMIN (formerly routes/admin.py)
+# ============================================================================
+
+admin_router = APIRouter(prefix="/api/admin", tags=["admin"])
+
+
+@admin_router.get("/jobs")
+def get_admin_jobs(admin: dict = Depends(require_admin)) -> list[dict]:
+    """All jobs, all companies, all statuses — Page 4's admin table."""
+    return list_all_jobs_admin()
+
+
+@admin_router.get("/jobs/{job_id}")
+def get_admin_job(job_id: int, admin: dict = Depends(require_admin)) -> dict:
+    job = get_admin_job_by_id(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    return job
+
+
+@admin_router.get("/companies/{company_id}")
+def get_admin_company(company_id: int, admin: dict = Depends(require_admin)) -> dict:
+    """Company profile + every job posted by that company — the admin drilldown view."""
+    profile = get_company_profile_by_id(company_id)
+    if not profile:
+        raise HTTPException(status_code=404, detail="Company not found")
+    return {"company": profile, "jobs": list_jobs_for_company(company_id)}

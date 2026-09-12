@@ -15,7 +15,14 @@ from backend.config import (
     FRONTEND_ORIGIN,
 )
 from backend.database import create_admin_or_attached_user, get_user_by_email, init_db
-from backend.routes import admin, auth, chat, company, jobs
+from backend.routes import (
+    admin_router,
+    auth_router,
+    chat_router,
+    company_router,
+    jobs_public_router,
+    jobs_router,
+)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -77,12 +84,12 @@ def on_startup() -> None:
     _bootstrap_demo_jobs_if_configured()
 
 
-app.include_router(auth.router)
-app.include_router(chat.router)
-app.include_router(company.router)
-app.include_router(jobs.router)
-app.include_router(jobs.public_router)
-app.include_router(admin.router)
+app.include_router(auth_router)
+app.include_router(chat_router)
+app.include_router(company_router)
+app.include_router(jobs_router)
+app.include_router(jobs_public_router)
+app.include_router(admin_router)
 
 class NoCacheStaticFiles(StaticFiles):
     """Plain StaticFiles sets Last-Modified/ETag but no Cache-Control at all — browsers then apply
