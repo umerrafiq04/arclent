@@ -354,12 +354,13 @@ one question mark, stop.
   job_title or required_skills-or-responsibilities is still genuinely missing.
 - REQUEST_JD_GENERATION is bookkeeping only — writing the JD is NEVER something your reply performs. If no JD
   exists yet and the checklist is incomplete, say what's still needed (never "one moment"/claim you're generating).
-  If a JD already exists, point them to the "Regenerate" button instead (a deliberate manual action).
+  If a JD already exists, acknowledge that you're refreshing it now — this regenerates automatically the instant
+  this turn commits, there's no button for the recruiter to click.
 - CORRECT_INFORMATION vs REQUEST_REFINEMENT — never the same turn, even with an existing JD. CORRECT_INFORMATION =
   changing an underlying JOB FACT in job_state (title, experience, location, work_mode, employment_type, education,
   salary, additional_information, any skill/responsibility/platform) — e.g. "change location to Delhi", "add Docker
   as a preferred skill" — even with a JD already drafted, this is still CORRECT_INFORMATION, not also a refinement;
-  the recruiter asks to regenerate/refine separately if they want the JD updated to match. REQUEST_REFINEMENT = how
+  the description regenerates automatically right after, with no extra step needed. REQUEST_REFINEMENT = how
   the JD READS (tone, length, emphasis, wording) with no fact change — e.g. "make it more professional", "shorten
   it", "emphasize SQL more". IMPORTANT: benefits and "ways to stand out" live ONLY on the drafted JD document, never
   in job_state — there is no list_operations slot for either. So "add tea/free snacks/health insurance as a
@@ -390,11 +391,12 @@ ADVICE vs. CONFIRMED REQUIREMENTS — non-negotiable distinction:
   same as ADVICE_REQUEST) — apply them on the recruiter's next turn once they say how to use it.
 - response: your natural-language reply. If the hard floor is met but the checklist isn't finished, ask ONLY the
   next unresolved field. Once both are done for the first time, follow AUTOMATIC GENERATION above — never say
-  "generating now"/"one moment"/"I'll draft this" on any OTHER turn (that one line is the sole exception). If a JD
-  already exists and this turn changes a job field, mention it plainly ("That's updated — the description no
-  longer reflects this change, click Regenerate whenever ready") and never claim you're already regenerating it. If
-  the JD exists, isn't stale, and nothing more is being asked, you may mention it's ready to publish and point to
-  the "Publish Job" button rather than acting on a yes/no yourself. Keep it concise and conversational.
+  "generating now"/"one moment"/"I'll draft this" on any OTHER turn (that one line is the sole exception, plus the
+  case just below). If a JD already exists and this turn changes a job field, the description regenerates
+  automatically right after this turn — say something like "Got it — updating the description now..." and NEVER
+  mention a "Regenerate" button or tell them to click anything for this, that's no longer a step they take. If the
+  JD exists, isn't stale, and nothing more is being asked, you may mention it's ready to publish and point to the
+  "Publish Job" button rather than acting on a yes/no yourself. Keep it concise and conversational.
 - If CONVERSATION PHASE is "published": if just chatting, acknowledge it's live and mention they can start a new
   job for a different role; if asking to change something, treat it like any edit (same intents as normal) — it
   won't go live until they click "Publish Edit" (a direct action), so say the change is staged.
@@ -414,7 +416,12 @@ def _jd_status_text(jd_exists: bool, jd_stale: bool) -> str:
     if not jd_exists:
         return "no job description generated yet"
     if jd_stale:
-        return "a job description exists but is now STALE (job details changed since it was generated) — mention this, don't claim you're regenerating it"
+        return (
+            "a job description exists but is momentarily stale — it regenerates automatically right after the "
+            "edit that caused this, so this should clear within the same turn; if you still see this on a LATER "
+            "turn, a regeneration attempt likely failed, so acknowledge the edit without claiming you're already "
+            "regenerating it again"
+        )
     return "a job description has been generated and is up to date"
 
 
@@ -1308,26 +1315,15 @@ def analyze_turn(state: GraphState) -> dict:
                 )
 
     # Symmetric counterpart to the block above — that canned "checklist complete, drafting now"
-    # phrasing is only ever true BEFORE a JD exists (generation fires exactly once per
+    # phrasing is only ever true BEFORE a JD exists (first-time generation fires exactly once per
     # conversation). Verified live: the model can still echo this near-verbatim from its own
-    # prompt example on an EXISTING draft — e.g. asked to "add tea as a benefit" (a JD-content-only
-    # field with no job_state list_operations slot), it fell back to the first-time-generation
-    # phrasing instead of a real edit, leaving the recruiter with a message implying something is
-    # about to happen when route_after_apply's generate_jd guard (`not jd_versions`) means nothing
-    # actually will. Deterministically replace it with an honest acknowledgment instead: if this
-    # turn is a REQUEST_REFINEMENT with an existing draft, refine_jd genuinely does auto-fire this
-    # same turn (see route_after_apply), so that phrasing is accurate; otherwise (a job_state-only
-    # CORRECT_INFORMATION change) nothing regenerates automatically, so say so and point at Regenerate.
+    # prompt example on an EXISTING draft — e.g. asked to "add tea as a benefit," it fell back to
+    # the first-time-generation phrasing instead of a real edit. Deterministically replace it with
+    # an honest acknowledgment instead. Both REQUEST_REFINEMENT and a job_state-changing
+    # CORRECT_INFORMATION now regenerate automatically the instant this turn commits (see
+    # route_after_apply's jd_needs_refresh branch) — never tell the recruiter to click anything.
     if jd_already_exists and looks_like_ready_statement:
-        if analysis.intent == Intent.REQUEST_REFINEMENT and state.get("jd_versions") and state.get("selected_version"):
-            analysis = analysis.model_copy(update={"response": "Got it — updating the description now..."})
-        else:
-            analysis = analysis.model_copy(
-                update={
-                    "response": "Got it — I've noted that. The description no longer reflects this change, so "
-                    "click Regenerate whenever you're ready to refresh it."
-                }
-            )
+        analysis = analysis.model_copy(update={"response": "Got it — updating the description now..."})
 
     clean_response = _strip_markdown(analysis.response)
     dumped = analysis.model_dump(mode="json")
@@ -1962,10 +1958,7 @@ def _fallback_turn_analysis(state: GraphState) -> TurnAnalysis:
             return TurnAnalysis(
                 intent=Intent.CHITCHAT_OR_UNCLEAR,
                 enough_information=True,
-                response=(
-                    "Sorry, I had trouble processing that last message — could you try rephrasing it? "
-                    "If you were asking me to change the description, click Regenerate after resending it."
-                ),
+                response="Sorry, I had trouble processing that last message — could you try rephrasing it?",
             )
         return TurnAnalysis(
             intent=Intent.CHITCHAT_OR_UNCLEAR,
@@ -2651,9 +2644,20 @@ def route_after_apply(state: GraphState) -> str:
     # CONFIRM_PUBLISH prompt guidance: a chat confirmation gets acknowledged in the reply text,
     # but the graph itself takes no action).
 
-    # Regeneration is deliberately NEVER auto-triggered by an edit that makes the JD stale
-    # either — an edit just leaves jd_stale=true as a visible signal, nothing more; only an
-    # explicit Regenerate click (also the direct /generate endpoint) clears it.
+    # Any job-fact edit that just made an EXISTING draft stale (jd_needs_refresh — see its
+    # comment in apply_updates), or an explicit "regenerate"/"write it again" request against one,
+    # regenerates immediately, same turn — the recruiter is never told to click a button for
+    # either case (reversed from the earlier "edit just leaves jd_stale=true, nothing more"
+    # behavior per explicit direction: chat edits must always regenerate on their own). Still
+    # guarded on an existing draft — first-time generation is the branch above, and there's
+    # nothing to regenerate before that. The manual "Regenerate" button / direct /generate
+    # endpoint still exists for a deliberate re-roll when nothing actually changed, or as a retry
+    # after this auto-attempt itself fails (generate_jd's own exception handler covers that).
+    if jd_versions and state.get("selected_version") and (
+        state.get("jd_needs_refresh") or intent == Intent.REQUEST_JD_GENERATION.value
+    ):
+        return "generate_jd"
+
     return END
 
 
