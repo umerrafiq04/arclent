@@ -1,7 +1,13 @@
 """Consolidated LangGraph agent module — state, sufficiency rules, LLM provider config,
 prompt templates, graph node functions, and graph wiring, all in one file per an explicit
 directory-simplicity decision (previously split across state.py, sufficiency.py, llm.py,
-prompts.py, nodes.py, graph.py within this package)."""
+prompts.py, nodes.py, graph.py within this package).
+
+The two one-shot LLM generations (job description draft, and chat-driven refinement of it) follow
+the same schema as the ReachOut project: a state TypedDict plus a BaseWorkflow subclass with the
+fixed stages validate -> prepare -> execute -> validate_output, failures reported via
+`error_type` / `error_message` in the state. See the WORKFLOWS section; generate_jd / refine_jd
+are thin graph-node adapters around JDWorkflow / JDRefineWorkflow."""
 
 import json
 import logging
@@ -9,7 +15,7 @@ import random
 import re
 import sqlite3
 import time
-from typing import Annotated, Literal, TypedDict, TypeVar
+from typing import Annotated, Generic, Literal, TypedDict, TypeVar
 
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, RemoveMessage, SystemMessage
@@ -139,6 +145,7 @@ def combined_missing_essential(job_state: dict, llm_missing_essential: list[str]
 # ============================================================================
 
 T = TypeVar("T", bound=BaseModel)
+WS = TypeVar("WS")  # a workflow's state type — see BaseWorkflow
 
 _llm: BaseChatModel | None = None
 
@@ -2393,19 +2400,196 @@ def _jd_document_message(version: str, jd: dict) -> AIMessage:
     return AIMessage(content="", additional_kwargs={"jd_document": jd, "jd_version": version})
 
 
-def generate_jd(state: GraphState, config: RunnableConfig, auto_triggered: bool = False) -> dict:
-    """Generates ONE complete job description draft — not a pair to choose between. Immediately
-    marks it selected (there's nothing to choose), so Publish becomes available right away.
+# ============================================================================
+# WORKFLOWS — same schema as the ReachOut project: a state type plus a workflow class whose
+# stages are always validate -> prepare -> execute -> validate_output
+# ============================================================================
 
-    "Regenerate" (same function, called again once a draft already exists) is NOT a blank-page
-    rewrite — it passes the CURRENT draft into the prompt as an ENHANCEMENT baseline: fix errors,
-    polish wording, add missing depth, but never drop or replace a skill/point/fact that's already
-    there (see _JD_REGENERATION_CONTEXT). This deliberately relies on the model's own judgment
-    rather than a deterministic field-lock — "rewrite this typo, keep the meaning" is a genuine
-    editorial judgment call, not a fact-fidelity check code can verify. A first attempt at this used
-    a hard lock (verbatim-restore whatever the recruiter had last touched) and that was wrong in
-    the other direction: it froze hand-edited content so hard that Regenerate couldn't even fix an
-    obvious typo in it, which defeats the entire point of asking for a regeneration.
+
+class BaseWorkflow(Generic[WS]):
+    """One-shot LLM generation with a fixed shape. Every stage returns a dict of state updates;
+    a failure is reported by putting `error_type` ("invalid" for bad input, "ai_error" for a
+    model/output failure) and a user-facing `error_message` in the state — never by raising — and
+    run() stops at the first stage that sets one, so later stages never see a half-built state.
+    """
+
+    state_type: type[WS]
+
+    def validate(self, state: WS) -> dict:
+        return {}
+
+    def prepare(self, state: WS) -> dict:
+        return {}
+
+    def execute(self, state: WS) -> dict:
+        raise NotImplementedError
+
+    def validate_output(self, state: WS) -> dict:
+        return {}
+
+    def run(self, state: WS) -> WS:
+        current = dict(state)
+        for stage in (self.validate, self.prepare, self.execute, self.validate_output):
+            current.update(stage(current))
+            if current.get("error_type"):
+                break
+        return current  # type: ignore[return-value]
+
+
+_JD_GENERATION_FAILED_MESSAGE = (
+    "I hit a snag generating the job description just now — this wasn't about anything "
+    "you entered, our end had trouble keeping up for a moment. Please click Generate "
+    "again in a few seconds."
+)
+_JD_REFINEMENT_FAILED_MESSAGE = (
+    "I hit a snag applying that change — this wasn't about anything you said, our end had "
+    "trouble keeping up for a moment. Please try that again."
+)
+
+# The PROOFREAD MIRROR fields (see JD_GENERATION_PROMPT_TEMPLATE): never stored on the JD document
+# itself — job_state is their only home.
+_SKILLS_FAMILY_FIELDS = ("required_skills", "preferred_skills", "responsibilities")
+
+
+class JDState(TypedDict, total=False):
+    # inputs
+    company_profile: dict
+    job_state: dict
+    current_jd: dict | None  # the existing draft when regenerating, else None
+    # prepare
+    context_summary: str
+    prompt: str
+    # execute
+    draft: dict  # the model's raw JobDescriptionDraft
+    # validate_output
+    jd: dict  # the cleaned JD document (job_state above is also updated with proofread skills)
+    # failure
+    error_type: str
+    error_message: str
+
+
+class JDWorkflow(BaseWorkflow[JDState]):
+    """First draft, or "Regenerate" when a draft already exists — a regeneration is NOT a
+    blank-page rewrite: the current draft goes into the prompt as an ENHANCEMENT baseline (fix
+    errors, polish wording, add depth, never drop what's already there — see
+    _JD_REGENERATION_CONTEXT). That relies on the model's own judgment rather than a deterministic
+    field-lock: a first attempt at a hard lock froze hand-edited content so tightly that Regenerate
+    couldn't even fix an obvious typo in it, defeating the point of regenerating.
+    """
+
+    state_type = JDState
+
+    def validate(self, state: JDState) -> dict:
+        if not (state.get("job_state") or {}).get("job_title"):
+            return {
+                "error_type": "invalid",
+                "error_message": "A job title is needed before a job description can be generated.",
+            }
+        return {}
+
+    def prepare(self, state: JDState) -> dict:
+        current_jd = state.get("current_jd")
+        job_title = state["job_state"]["job_title"]
+        return {
+            "context_summary": f"{job_title} ({'regeneration' if current_jd else 'first draft'})",
+            "prompt": build_jd_generation_prompt(
+                state.get("company_profile") or {}, state["job_state"], current_jd=current_jd
+            ),
+        }
+
+    def execute(self, state: JDState) -> dict:
+        time.sleep(3)  # avoid bursting past per-second rate limits right after the chat turn's own LLM call
+        messages = [
+            SystemMessage(content=state["prompt"]),
+            HumanMessage(content="Generate the job description based on the information above."),
+        ]
+        try:
+            output = call_structured(JobDescriptionDraft, messages, retries=2)
+        except Exception:
+            logger.exception("generate_jd: structured output failed after retry (%s)", state.get("context_summary"))
+            return {"error_type": "ai_error", "error_message": _JD_GENERATION_FAILED_MESSAGE}
+        return {"draft": output.model_dump(mode="json")}
+
+    def validate_output(self, state: JDState) -> dict:
+        draft = dict(state["draft"])
+        skills_family_output = {field: draft.pop(field, []) for field in _SKILLS_FAMILY_FIELDS}
+        job_state = _apply_proofread_corrections(state["job_state"], skills_family_output)
+        jd = _apply_job_state_identity_fields(_dedupe_stand_out(_strip_markdown(draft), job_state), job_state)
+        return {"job_state": job_state, "jd": jd}
+
+
+class JDRefineState(TypedDict, total=False):
+    # inputs
+    company_profile: dict
+    job_state: dict
+    version: str
+    current_jd: dict
+    instruction: str  # the recruiter's own request, e.g. "make it more professional"
+    # prepare
+    context_summary: str
+    prompt: str
+    # execute
+    draft: dict  # the model's raw updated JD
+    change_summary: str
+    # validate_output
+    jd: dict
+    # failure
+    error_type: str
+    error_message: str
+
+
+class JDRefineWorkflow(BaseWorkflow[JDRefineState]):
+    """A chat-driven, instruction-specific edit of the existing draft ("make it more professional",
+    "add tea as a benefit") — unlike JDWorkflow, it doesn't proofread job_state's skills lists; it
+    just drops whatever the model returned for them rather than persist stale duplicate content.
+    """
+
+    state_type = JDRefineState
+
+    def validate(self, state: JDRefineState) -> dict:
+        if not (state.get("instruction") or "").strip():
+            return {
+                "error_type": "invalid",
+                "error_message": "Please tell me what you'd like changed in the job description.",
+            }
+        if not state.get("current_jd"):
+            return {
+                "error_type": "invalid",
+                "error_message": "There's no job description to update yet.",
+            }
+        return {}
+
+    def prepare(self, state: JDRefineState) -> dict:
+        return {
+            "context_summary": f"{state['job_state'].get('job_title')} (refine version {state.get('version')})",
+            "prompt": build_jd_refinement_prompt(
+                state.get("company_profile") or {}, state["job_state"], state["version"], state["current_jd"]
+            ),
+        }
+
+    def execute(self, state: JDRefineState) -> dict:
+        time.sleep(3)  # avoid bursting past per-second rate limits right after the chat turn's own LLM call
+        messages = [SystemMessage(content=state["prompt"]), HumanMessage(content=state["instruction"])]
+        try:
+            output = call_structured(JDRefinementOutput, messages, retries=2)
+        except Exception:
+            logger.exception("refine_jd: structured output failed after retry (%s)", state.get("context_summary"))
+            return {"error_type": "ai_error", "error_message": _JD_REFINEMENT_FAILED_MESSAGE}
+        return {"draft": output.updated_jd.model_dump(mode="json"), "change_summary": output.change_summary}
+
+    def validate_output(self, state: JDRefineState) -> dict:
+        draft = dict(state["draft"])
+        for field in _SKILLS_FAMILY_FIELDS:
+            draft.pop(field, None)
+        job_state = state["job_state"]
+        jd = _apply_job_state_identity_fields(_dedupe_stand_out(_strip_markdown(draft), job_state), job_state)
+        return {"jd": jd}
+
+
+def generate_jd(state: GraphState, config: RunnableConfig, auto_triggered: bool = False) -> dict:
+    """Graph node / direct-call adapter around JDWorkflow: builds the workflow's input from the
+    graph state, then turns its result (or error) into the state update + chat messages. Marks
+    the draft selected immediately (there's nothing to choose), so Publish is available right away.
 
     `auto_triggered` is only ever True via the graph's own route_after_apply -> generate_jd edge
     (see build_graph) — the one case where analyze_turn's own "Perfect — that's everything I need.
@@ -2417,29 +2601,20 @@ def generate_jd(state: GraphState, config: RunnableConfig, auto_triggered: bool 
     own, or the synthesized intake transcript, never a same-turn promise this function just broke.
     """
     company_profile = state.get("company_profile") or {}
-    job_state = state.get("job_state") or {}
     session_id = config["configurable"]["thread_id"]
-    jd_versions_existing = state.get("jd_versions") or {}
     selected_version = state.get("selected_version")
-    current_jd = jd_versions_existing.get(selected_version) if selected_version else None
-    is_regeneration = bool(current_jd)
+    current_jd = (state.get("jd_versions") or {}).get(selected_version) if selected_version else None
 
-    time.sleep(3)  # this is the 2nd Mistral call in the same turn — avoid bursting past per-second rate limits
-    prompt = build_jd_generation_prompt(company_profile, job_state, current_jd=current_jd)
-    messages = [
-        SystemMessage(content=prompt),
-        HumanMessage(content="Generate the job description based on the information above."),
-    ]
+    result = JDWorkflow().run(
+        {
+            "company_profile": company_profile,
+            "job_state": state.get("job_state") or {},
+            "current_jd": current_jd,
+        }
+    )
 
-    try:
-        output = call_structured(JobDescriptionDraft, messages, retries=2)
-    except Exception:
-        logger.exception("generate_jd: structured output failed after retry")
-        response = (
-            "I hit a snag generating the job description just now — this wasn't about anything "
-            "you entered, our end had trouble keeping up for a moment. Please click Generate "
-            "again in a few seconds."
-        )
+    if result.get("error_type"):
+        response = result["error_message"]
         new_messages: list[BaseMessage] = []
         if auto_triggered:
             prior_messages = state.get("messages") or []
@@ -2449,22 +2624,13 @@ def generate_jd(state: GraphState, config: RunnableConfig, auto_triggered: bool 
         new_messages.append(AIMessage(content=response))
         return {"messages": new_messages, "last_response": response}
 
-    output_dict = output.model_dump(mode="json")
-    # The PROOFREAD MIRROR fields (see prompt) never get stored on the JD document itself — only
-    # job_state, its single source of truth, gets corrected — see _apply_proofread_corrections.
-    skills_family_output = {
-        field: output_dict.pop(field, []) for field in ("required_skills", "preferred_skills", "responsibilities")
-    }
-    job_state = _apply_proofread_corrections(job_state, skills_family_output)
-
-    jd = _apply_job_state_identity_fields(
-        _dedupe_stand_out(_strip_markdown(output_dict), job_state), job_state
-    )
+    job_state = result["job_state"]
+    jd = result["jd"]
     jd_versions = {"1": jd}
     save_jd_versions(session_id, jd_versions)
     save_selected_version(session_id, "1")
 
-    # job_state may have just been corrected above (typo fixes to required_skills/preferred_skills/
+    # job_state may have just been corrected (typo fixes to required_skills/preferred_skills/
     # responsibilities) — write it through the same way apply_updates/patch_job_state do, so the
     # correction survives a page reload, not just this in-memory turn. Drafts only, same guard as
     # everywhere else: an already-published job's edits stay off the live row until the recruiter
@@ -2481,7 +2647,7 @@ def generate_jd(state: GraphState, config: RunnableConfig, auto_triggered: bool 
         f"Here's the refreshed job description for {job_title} — your edits are preserved where "
         "they still apply. Let me know if you'd like any changes, or click Regenerate again — "
         "otherwise it's ready to publish."
-        if is_regeneration
+        if current_jd
         else f"Here's the job description I've drafted for {job_title}. Let me know if you'd like any "
         "changes, or click Regenerate for a fresh draft — otherwise it's ready to publish."
     )
@@ -2502,47 +2668,45 @@ def generate_jd(state: GraphState, config: RunnableConfig, auto_triggered: bool 
     }
 
 
+def _latest_recruiter_message(state: GraphState) -> str:
+    """The recruiter's own most recent message. NOT messages[-1]: analyze_turn has already appended
+    its own reply ("Got it — updating the description now...") by the time refine_jd runs, so the
+    last message in state is the bot's — which used to be what got passed to the model as the
+    edit instruction, meaning the recruiter's actual request ("add tea as a benefit") never
+    reached it.
+    """
+    for message in reversed(state.get("messages") or []):
+        if isinstance(message, HumanMessage):
+            return message.content or ""
+    return ""
+
+
 def refine_jd(state: GraphState, config: RunnableConfig) -> dict:
-    company_profile = state.get("company_profile") or {}
-    job_state = state.get("job_state") or {}
+    """Graph node adapter around JDRefineWorkflow (see generate_jd for the pattern)."""
     jd_versions = state.get("jd_versions") or {}
     version = state.get("selected_version")
     session_id = config["configurable"]["thread_id"]
 
-    current_jd = jd_versions.get(version) or {}
-    instruction_message = state["messages"][-1] if state.get("messages") else None
-    instruction = instruction_message.content if instruction_message else ""
+    result = JDRefineWorkflow().run(
+        {
+            "company_profile": state.get("company_profile") or {},
+            "job_state": state.get("job_state") or {},
+            "version": version,
+            "current_jd": jd_versions.get(version) or {},
+            "instruction": _latest_recruiter_message(state),
+        }
+    )
 
-    time.sleep(3)  # this is the 2nd Mistral call in the same turn — avoid bursting past per-second rate limits
-    prompt = build_jd_refinement_prompt(company_profile, job_state, version, current_jd)
-    messages = [SystemMessage(content=prompt), HumanMessage(content=instruction)]
-
-    try:
-        output = call_structured(JDRefinementOutput, messages, retries=2)
-    except Exception:
-        logger.exception("refine_jd: structured output failed after retry")
-        response = (
-            "I hit a snag applying that change — this wasn't about anything you said, our end had "
-            "trouble keeping up for a moment. Please try that again."
-        )
+    if result.get("error_type"):
+        response = result["error_message"]
         return {"messages": [AIMessage(content=response)], "last_response": response}
 
-    updated_jd_dict = output.updated_jd.model_dump(mode="json")
-    # Same as generate_jd: required_skills/preferred_skills/responsibilities never get stored on
-    # the JD document itself, job_state is their only home. Refine (a chat-driven, instruction-
-    # specific edit like "make it more professional") doesn't proofread job_state's lists the way
-    # Regenerate does — just strip whatever the model returned for these here rather than persist
-    # possibly-stale, unused duplicate content into the saved draft.
-    for field in ("required_skills", "preferred_skills", "responsibilities"):
-        updated_jd_dict.pop(field, None)
-    updated_jd = _apply_job_state_identity_fields(
-        _dedupe_stand_out(_strip_markdown(updated_jd_dict), job_state), job_state
-    )
+    updated_jd = result["jd"]
     new_jd_versions = dict(jd_versions)
     new_jd_versions[version] = updated_jd
     save_refined_jd(session_id, version, updated_jd)
 
-    response = f"Updated version {version}: {output.change_summary}"
+    response = f"Updated version {version}: {result['change_summary']}"
     return {
         "jd_versions": new_jd_versions,
         "messages": [
